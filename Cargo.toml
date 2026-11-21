@@ -1,0 +1,44 @@
+[workspace]
+members = [
+    "crates/core",
+    "crates/keystore",
+    "crates/audit",
+    "crates/adapters",
+    "crates/broker",
+    "crates/cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["Seramys <stacklanekit@gmail.com>"]
+repository = "https://github.com/Seramys/agentvault"
+homepage = "https://github.com/Seramys/agentvault"
+
+[workspace.dependencies]
+agentvault-core = { path = "crates/core" }
+agentvault-keystore = { path = "crates/keystore" }
+agentvault-audit = { path = "crates/audit" }
+agentvault-adapters = { path = "crates/adapters" }
+agentvault-broker = { path = "crates/broker" }
+
+anyhow = "1"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+hmac = "0.12"
+sha2 = "0.10"
+hkdf = "0.12"
+rand = "0.8"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+hex = "0.4"
+clap = { version = "4", default-features = false, features = ["std", "derive", "env", "help", "usage", "error-context", "suggestions"] }
+
+[profile.release]
+lto = "thin"
+strip = true

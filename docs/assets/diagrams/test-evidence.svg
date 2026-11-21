@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="660" viewBox="0 0 1200 660" role="img" aria-labelledby="title desc">
+  <title id="title">AgentVault test evidence</title>
+  <desc id="desc">Actual test counts: 38 Rust tests, 150 isolated CLI checks, 23 refresh checks, 40 real config-copy checks, 22 environment persistence checks, all passing.</desc>
+  <defs>
+    <linearGradient id="bg5" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F8F6FF"/>
+      <stop offset="1" stop-color="#F1EEFF"/>
+    </linearGradient>
+    <linearGradient id="bar1" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#A9B8FF"/><stop offset="1" stop-color="#8B9CFF"/>
+    </linearGradient>
+    <linearGradient id="bar2" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#C4B5FD"/><stop offset="1" stop-color="#A78BFA"/>
+    </linearGradient>
+    <linearGradient id="bar3" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#A7F3D0"/><stop offset="1" stop-color="#6EE7B7"/>
+    </linearGradient>
+    <filter id="s5" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="7" stdDeviation="9" flood-color="#5B5BD6" flood-opacity="0.09"/>
+    </filter>
+    <style>
+      .t { font: 700 30px Inter, "Segoe UI", sans-serif; fill: #25264A; }
+      .s { font: 400 15px Inter, "Segoe UI", sans-serif; fill: #69718F; }
+      .h { font: 700 17px Inter, "Segoe UI", sans-serif; fill: #25264A; }
+      .b { font: 400 14px Inter, "Segoe UI", sans-serif; fill: #4B5373; }
+      .m { font: 500 13px "JetBrains Mono", Consolas, monospace; fill: #4B5373; }
+      .big { font: 800 42px Inter, "Segoe UI", sans-serif; fill: #25264A; }
+      .tag { font: 600 12px Inter, "Segoe UI", sans-serif; fill: #3E4770; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="660" rx="28" fill="url(#bg5)"/>
+  <text x="48" y="62" class="t">Test evidence, not a happy-path demo</text>
+  <text x="48" y="90" class="s">Windows 11 · Rust workspace · release binary · real Codex config copy · actual user env write + restore.</text>
+
+  <!-- left chart -->
+  <g filter="url(#s5)">
+    <rect x="40" y="128" width="690" height="470" rx="20" fill="#FFFFFF" stroke="#DCD8F4"/>
+    <text x="68" y="168" class="h">Checks executed</text>
+
+    <!-- rows -->
+    <text x="68" y="212" class="b">Rust workspace</text>
+    <rect x="235" y="196" width="72" height="24" rx="12" fill="url(#bar1)"/>
+    <text x="316" y="214" class="m">38 passed</text>
+
+    <text x="68" y="258" class="b">Isolated CLI</text>
+    <rect x="235" y="242" width="292" height="24" rx="12" fill="url(#bar1)"/>
+    <text x="536" y="260" class="m">150 passed</text>
+
+    <text x="68" y="304" class="b">init --refresh</text>
+    <rect x="235" y="288" width="44" height="24" rx="12" fill="url(#bar2)"/>
+    <text x="288" y="306" class="m">23 passed</text>
+
+    <text x="68" y="350" class="b">Real config copies</text>
+    <rect x="235" y="334" width="78" height="24" rx="12" fill="url(#bar2)"/>
+    <text x="322" y="352" class="m">40 passed</text>
+
+    <text x="68" y="396" class="b">Env persistence</text>
+    <rect x="235" y="380" width="44" height="24" rx="12" fill="url(#bar3)"/>
+    <text x="288" y="398" class="m">22 passed</text>
+
+    <line x1="68" y1="426" x2="700" y2="426" stroke="#E4E0FA"/>
+    <text x="68" y="458" class="h">Actual checks included</text>
+    <text x="68" y="484" class="b">replay denied · expired ticket denied · hard-ttl cap · renew no-shorten · revoke token/jti/all</text>
+    <text x="68" y="508" class="b">rotate invalidation · honeypot global revoke · JSON unknown fields preserved · Codex multi-line args</text>
+    <text x="68" y="532" class="b">Qoder/Cursor project discovery · autostart/single instance · broken pipe · admin token ACL</text>
+    <text x="68" y="556" class="b">real user AGENTVAULT_HOME/PATH write, idempotence, uninstall and restore</text>
+
+    <rect x="68" y="574" width="600" height="1" fill="#E4E0FA"/>
+  </g>
+
+  <!-- right stats -->
+  <g filter="url(#s5)">
+    <rect x="758" y="128" width="402" height="470" rx="20" fill="#FFFFFF" stroke="#DCD8F4"/>
+    <rect x="782" y="154" width="354" height="92" rx="16" fill="#F0FDF4" stroke="#BBF7D0"/>
+    <text x="806" y="190" class="big">0</text>
+    <text x="848" y="188" class="h">failed checks</text>
+    <text x="806" y="218" class="b">1,000+ lines of real command output reviewed</text>
+
+    <text x="782" y="284" class="h">Real agents</text>
+    <text x="782" y="312" class="b">Codex CLI 0.153.4 · Cursor 3.31.11</text>
+    <text x="782" y="336" class="b">Real Codex config: 2 servers already wrapped</text>
+    <text x="782" y="360" class="b">Real config copied; test server added; rewrite verified</text>
+    <text x="782" y="384" class="b">Codex CLI `mcp get` parsed release launcher + home</text>
+
+    <line x1="782" y1="406" x2="1136" y2="406" stroke="#E4E0FA"/>
+    <text x="782" y="438" class="h">What is deliberately not claimed</text>
+    <text x="782" y="466" class="b">No GUI-level Cursor/Qoder tool invocation</text>
+    <text x="782" y="490" class="b">No macOS/Linux runtime validation here</text>
+    <text x="782" y="514" class="b">No sandbox or egress control (layers 2/3)</text>
+
+    <rect x="782" y="544" width="314" height="32" rx="16" fill="#EEF2FF"/>
+    <text x="802" y="565" class="m">cargo test --workspace  →  ok</text>
+  </g>
+
+  <rect x="40" y="618" width="1120" height="24" rx="12" fill="#FFFFFF" opacity="0.8" stroke="#E4E0FA"/>
+  <text x="60" y="635" class="m">these counts come from the local Windows test run, not estimated or mocked</text>
+</svg>

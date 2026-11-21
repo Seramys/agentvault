@@ -1,0 +1,165 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" role="img" aria-labelledby="title desc">
+  <title id="title">AgentVault CLI architecture</title>
+  <desc id="desc">Agent MCP configs are rewritten by the adapter, long-lived values move to the OS keystore, and the broker issues short-lived tickets to wrapped servers.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F8F6FF"/>
+      <stop offset="1" stop-color="#F1EEFF"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#A9B8FF"/>
+      <stop offset="1" stop-color="#8B9CFF"/>
+    </linearGradient>
+    <linearGradient id="violet" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#C4B5FD"/>
+      <stop offset="1" stop-color="#A78BFA"/>
+    </linearGradient>
+    <linearGradient id="mint" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#A7F3D0"/>
+      <stop offset="1" stop-color="#6EE7B7"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#5B5BD6" flood-opacity="0.10"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6C7AAB"/>
+    </marker>
+    <style>
+      .title { font: 700 30px Inter, "Segoe UI", sans-serif; fill: #25264A; }
+      .sub { font: 400 15px Inter, "Segoe UI", sans-serif; fill: #69718F; }
+      .h { font: 700 17px Inter, "Segoe UI", sans-serif; fill: #25264A; }
+      .b { font: 400 14px Inter, "Segoe UI", sans-serif; fill: #4B5373; }
+      .m { font: 500 13px "JetBrains Mono", Consolas, monospace; fill: #4B5373; }
+      .badge { font: 600 12px Inter, "Segoe UI", sans-serif; fill: #3E4770; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="640" rx="28" fill="url(#bg)"/>
+  <circle cx="1090" cy="92" r="34" fill="#FFFFFF" opacity="0.65"/>
+  <circle cx="1025" cy="54" r="9" fill="#F3C4E3"/>
+  <path d="M1088 60 l6 16 17 6 -17 6 -6 17 -6 -17 -17 -6 17 -6z" fill="#FFD86B" stroke="#2B2D4F" stroke-width="2"/>
+
+  <text x="48" y="66" class="title">AgentVault · CLI architecture</text>
+  <text x="48" y="94" class="sub">Long-lived secrets stay in the OS keystore. Agents receive short-lived, one-use tickets.</text>
+
+  <!-- 1. configs -->
+  <g filter="url(#shadow)">
+    <rect x="40" y="140" width="250" height="410" rx="22" fill="#FFFFFF" stroke="#DCD8F4"/>
+    <rect x="40" y="140" width="250" height="8" rx="4" fill="#8B9CFF"/>
+    <text x="64" y="180" class="h">1 · Agent configs</text>
+    <text x="64" y="204" class="b">project-first discovery</text>
+
+    <rect x="64" y="226" width="202" height="54" rx="12" fill="#F5F3FF" stroke="#E4E0FA"/>
+    <text x="82" y="250" class="m">Claude Code</text>
+    <text x="82" y="268" class="b">.mcp.json</text>
+
+    <rect x="64" y="290" width="202" height="54" rx="12" fill="#F5F3FF" stroke="#E4E0FA"/>
+    <text x="82" y="314" class="m">Cursor</text>
+    <text x="82" y="332" class="b">.cursor/mcp.json</text>
+
+    <rect x="64" y="354" width="202" height="54" rx="12" fill="#F5F3FF" stroke="#E4E0FA"/>
+    <text x="82" y="378" class="m">Codex</text>
+    <text x="82" y="396" class="b">config.toml</text>
+
+    <rect x="64" y="418" width="202" height="54" rx="12" fill="#F5F3FF" stroke="#E4E0FA"/>
+    <text x="82" y="442" class="m">Qoder / Cline / Gemini</text>
+    <text x="82" y="460" class="b">known client registry</text>
+
+    <rect x="64" y="488" width="202" height="38" rx="19" fill="#EEF2FF"/>
+    <text x="82" y="512" class="badge">unknown? use --path</text>
+  </g>
+
+  <line x1="300" y1="345" x2="348" y2="345" stroke="#6C7AAB" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- 2. adapter -->
+  <g filter="url(#shadow)">
+    <rect x="358" y="140" width="300" height="410" rx="22" fill="#FFFFFF" stroke="#DCD8F4"/>
+    <rect x="358" y="140" width="300" height="8" rx="4" fill="#A78BFA"/>
+    <text x="382" y="180" class="h">2 · init adapter</text>
+    <text x="382" y="204" class="b">atomic rewrite + backup</text>
+
+    <circle cx="390" cy="238" r="12" fill="#EEF2FF"/>
+    <text x="386" y="243" class="badge">1</text>
+    <text x="414" y="243" class="b">discover config candidates</text>
+
+    <circle cx="390" cy="276" r="12" fill="#EEF2FF"/>
+    <text x="386" y="281" class="badge">2</text>
+    <text x="414" y="281" class="b">dry-run: show every change</text>
+
+    <circle cx="390" cy="314" r="12" fill="#EEF2FF"/>
+    <text x="386" y="319" class="badge">3</text>
+    <text x="414" y="319" class="b">backup original config</text>
+
+    <circle cx="390" cy="352" r="12" fill="#EEF2FF"/>
+    <text x="386" y="357" class="badge">4</text>
+    <text x="414" y="357" class="b">migrate only planned env</text>
+
+    <circle cx="390" cy="390" r="12" fill="#EEF2FF"/>
+    <text x="386" y="395" class="badge">5</text>
+    <text x="414" y="395" class="b">wrap command with ticket</text>
+
+    <circle cx="390" cy="428" r="12" fill="#EEF2FF"/>
+    <text x="386" y="433" class="badge">6</text>
+    <text x="414" y="433" class="b">verify + idempotent re-run</text>
+
+    <rect x="382" y="466" width="252" height="56" rx="12" fill="#F8F6FF" stroke="#E4E0FA"/>
+    <text x="398" y="488" class="m">migrate env: DB_PASS</text>
+    <text x="398" y="508" class="m">keep env: ${BASE_URL}</text>
+  </g>
+
+  <line x1="670" y1="345" x2="718" y2="345" stroke="#6C7AAB" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- 3. vault/broker -->
+  <g filter="url(#shadow)">
+    <rect x="728" y="140" width="230" height="410" rx="22" fill="#FFFFFF" stroke="#DCD8F4"/>
+    <rect x="728" y="140" width="230" height="8" rx="4" fill="#6EE7B7"/>
+    <text x="752" y="180" class="h">3 · trusted core</text>
+    <text x="752" y="204" class="b">keystore + broker</text>
+
+    <rect x="752" y="228" width="182" height="86" rx="14" fill="#ECFDF5" stroke="#BBF7D0"/>
+    <text x="770" y="254" class="h">OS keystore</text>
+    <text x="770" y="276" class="b">DPAPI · Keychain</text>
+    <text x="770" y="294" class="b">Secret Service · file</text>
+
+    <rect x="752" y="332" width="182" height="96" rx="14" fill="#EEF2FF" stroke="#C7D2FE"/>
+    <text x="770" y="358" class="h">ticket broker</text>
+    <text x="770" y="380" class="b">HMAC-SHA256</text>
+    <text x="770" y="398" class="b">TTL · max_uses · epoch</text>
+    <text x="770" y="416" class="b">local 127.0.0.1</text>
+
+    <rect x="752" y="446" width="182" height="76" rx="14" fill="#FDF2F8" stroke="#FBCFE8"/>
+    <text x="770" y="472" class="h">audit + canary</text>
+    <text x="770" y="494" class="b">JSONL trail · honeypot</text>
+    <text x="770" y="512" class="b">revoke-all on trip</text>
+  </g>
+
+  <line x1="970" y1="345" x2="1018" y2="345" stroke="#6C7AAB" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- 4. wrapped server -->
+  <g filter="url(#shadow)">
+    <rect x="1028" y="140" width="132" height="410" rx="22" fill="#FFFFFF" stroke="#DCD8F4"/>
+    <rect x="1028" y="140" width="132" height="8" rx="4" fill="#F3C4E3"/>
+    <text x="1050" y="180" class="h">4 · agent</text>
+    <text x="1050" y="204" class="b">wrapped server</text>
+
+    <rect x="1050" y="230" width="88" height="88" rx="22" fill="url(#blue)" stroke="#2B2D4F" stroke-width="2.5"/>
+    <circle cx="1082" cy="266" r="10" fill="#FFFFFF"/>
+    <circle cx="1106" cy="266" r="10" fill="#FFFFFF"/>
+    <path d="M1084 294 q10 8 20 0" fill="none" stroke="#25264A" stroke-width="3" stroke-linecap="round"/>
+    <path d="M1094 230 l0 -14" stroke="#2B2D4F" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="1094" cy="212" r="5" fill="#6EE7B7" stroke="#2B2D4F" stroke-width="2"/>
+
+    <rect x="1042" y="342" width="104" height="84" rx="14" fill="#F8F6FF" stroke="#E4E0FA"/>
+    <text x="1058" y="368" class="m">av1...</text>
+    <text x="1058" y="390" class="b">one-use</text>
+    <text x="1058" y="410" class="b">TTL bound</text>
+
+    <rect x="1042" y="446" width="104" height="66" rx="14" fill="#FFF7ED" stroke="#FED7AA"/>
+    <text x="1058" y="472" class="b">no long-lived</text>
+    <text x="1058" y="492" class="b">secret copied</text>
+  </g>
+
+  <!-- bottom note -->
+  <rect x="40" y="578" width="1120" height="38" rx="19" fill="#FFFFFF" opacity="0.75" stroke="#E4E0FA"/>
+  <text x="64" y="603" class="m">config rewrite is strict JSON / minimal TOML; a backup is always written before mutation</text>
+</svg>

@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" role="img" aria-labelledby="title desc">
+  <title id="title">Ticket lifecycle</title>
+  <desc id="desc">A ticket is issued, used at most max_uses times, and then denied. Revocation, rotation and parent expiry invalidate it.</desc>
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F8F6FF"/>
+      <stop offset="1" stop-color="#F2F0FF"/>
+    </linearGradient>
+    <filter id="s2" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="7" stdDeviation="9" flood-color="#5B5BD6" flood-opacity="0.10"/>
+    </filter>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10z" fill="#6C7AAB"/>
+    </marker>
+    <style>
+      .t { font: 700 30px Inter, "Segoe UI", sans-serif; fill: #25264A; }
+      .s { font: 400 15px Inter, "Segoe UI", sans-serif; fill: #69718F; }
+      .h { font: 700 16px Inter, "Segoe UI", sans-serif; fill: #25264A; }
+      .b { font: 400 14px Inter, "Segoe UI", sans-serif; fill: #4B5373; }
+      .m { font: 500 13px "JetBrains Mono", Consolas, monospace; fill: #4B5373; }
+      .tag { font: 600 12px Inter, "Segoe UI", sans-serif; fill: #3E4770; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="560" rx="28" fill="url(#bg2)"/>
+  <text x="48" y="62" class="t">Ticket lifecycle</text>
+  <text x="48" y="90" class="s">A ticket is a capability, not a password. It is signed, time-bound and use-bound.</text>
+
+  <!-- step cards -->
+  <g filter="url(#s2)">
+    <rect x="40" y="128" width="200" height="238" rx="20" fill="#FFFFFF" stroke="#DCD8F4"/>
+    <rect x="40" y="128" width="200" height="7" rx="4" fill="#8B9CFF"/>
+    <text x="62" y="164" class="h">1 · issue</text>
+    <text x="62" y="192" class="b">broker signs claims</text>
+    <rect x="60" y="210" width="160" height="60" rx="12" fill="#F5F3FF" stroke="#E4E0FA"/>
+    <text x="74" y="234" class="m">av1.payload.sig</text>
+    <text x="74" y="254" class="m">HMAC-SHA256</text>
+    <text x="62" y="296" class="b">TTL · scope · jti</text>
+    <text x="62" y="318" class="b">max_uses · hard_exp</text>
+    <rect x="62" y="334" width="72" height="24" rx="12" fill="#EEF2FF"/>
+    <text x="76" y="351" class="tag">30s</text>
+  </g>
+
+  <line x1="240" y1="247" x2="272" y2="247" stroke="#6C7AAB" stroke-width="2.5" marker-end="url(#a2)"/>
+
+  <g filter="url(#s2)">
+    <rect x="280" y="128" width="200" height="238" rx="20" fill="#FFFFFF" stroke="#DCD8F4"/>
+    <rect x="280" y="128" width="200" height="7" rx="4" fill="#6EE7B7"/>
+    <text x="302" y="164" class="h">2 · resolve</text>
+    <text x="302" y="192" class="b">ticket → value</text>
+    <rect x="300" y="210" width="160" height="60" rx="12" fill="#ECFDF5" stroke="#BBF7D0"/>
+    <text x="314" y="234" class="m">resolve(av1…)</text>
+    <text x="314" y="254" class="m">→ postgres://…</text>
+    <text x="302" y="296" class="b">one use consumed</text>
+    <text x="302" y="318" class="b">attempt recorded</text>
+    <rect x="302" y="334" width="102" height="24" rx="12" fill="#DCFCE7"/>
+    <text x="316" y="351" class="tag">max_uses = 1</text>
+  </g>
+
+  <line x1="480" y1="247" x2="512" y2="247" stroke="#6C7AAB" stroke-width="2.5" marker-end="url(#a2)"/>
+
+  <g filter="url(#s2)">
+    <rect x="520" y="128" width="200" height="238" rx="20" fill="#FFFFFF" stroke="#DCD8F4"/>
+    <rect x="520" y="128" width="200" height="7" rx="4" fill="#F3C4E3"/>
+    <text x="542" y="164" class="h">3 · replay</text>
+    <text x="542" y="192" class="b">second resolve denied</text>
+    <rect x="540" y="210" width="160" height="60" rx="12" fill="#FDF2F8" stroke="#FBCFE8"/>
+    <text x="554" y="234" class="m">resolve(av1…)</text>
+    <text x="554" y="254" class="m">error: denied</text>
+    <text x="542" y="296" class="b">ticket already used</text>
+    <text x="542" y="318" class="b">audit: revoked</text>
+    <rect x="542" y="334" width="102" height="24" rx="12" fill="#FCE7F3"/>
+    <text x="556" y="351" class="tag">zero reuse</text>
+  </g>
+
+  <line x1="720" y1="247" x2="752" y2="247" stroke="#6C7AAB" stroke-width="2.5" marker-end="url(#a2)"/>
+
+  <g filter="url(#s2)">
+    <rect x="760" y="128" width="200" height="238" rx="20" fill="#FFFFFF" stroke="#DCD8F4"/>
+    <rect x="760" y="128" width="200" height="7" rx="4" fill="#FBBF24"/>
+    <text x="782" y="164" class="h">4 · revoke</text>
+    <text x="782" y="192" class="b">ticket / secret / all</text>
+    <rect x="780" y="210" width="160" height="60" rx="12" fill="#FFFBEB" stroke="#FDE68A"/>
+    <text x="794" y="234" class="m">revoke --ticket</text>
+    <text x="794" y="254" class="m">revoke --all</text>
+    <text x="782" y="296" class="b">secret epoch bump</text>
+    <text x="782" y="318" class="b">global epoch bump</text>
+    <rect x="782" y="334" width="102" height="24" rx="12" fill="#FEF3C7"/>
+    <text x="796" y="351" class="tag">instant kill</text>
+  </g>
+
+  <line x1="960" y1="247" x2="992" y2="247" stroke="#6C7AAB" stroke-width="2.5" marker-end="url(#a2)"/>
+
+  <g filter="url(#s2)">
+    <rect x="1000" y="128" width="160" height="238" rx="20" fill="#FFFFFF" stroke="#DCD8F4"/>
+    <rect x="1000" y="128" width="160" height="7" rx="4" fill="#A78BFA"/>
+    <text x="1022" y="164" class="h">task / renew</text>
+    <text x="1022" y="192" class="b">long-running work</text>
+    <rect x="1020" y="210" width="120" height="60" rx="12" fill="#F5F3FF" stroke="#E4E0FA"/>
+    <text x="1034" y="234" class="m">parent</text>
+    <text x="1034" y="254" class="m">→ child</text>
+    <text x="1022" y="296" class="b">child ≤ hard_exp</text>
+    <text x="1022" y="318" class="b">renew never shortens</text>
+    <rect x="1022" y="334" width="102" height="24" rx="12" fill="#EDE9FE"/>
+    <text x="1036" y="351" class="tag">hard limit</text>
+  </g>
+
+  <!-- claims row -->
+  <g>
+    <rect x="40" y="404" width="1120" height="112" rx="18" fill="#FFFFFF" stroke="#E4E0FA"/>
+    <text x="62" y="434" class="h">Claims carried in every ticket</text>
+    <text x="62" y="462" class="m">sub · secret · scope · jti · exp · hard_exp · max_uses · epoch · gepoch</text>
+    <text x="62" y="488" class="b">Resolution checks signature, device binding, expiry, revocation epoch, secret epoch and remaining uses.</text>
+    <text x="62" y="508" class="b">No plaintext long-lived secret is ever written into the ticket.</text>
+  </g>
+</svg>
