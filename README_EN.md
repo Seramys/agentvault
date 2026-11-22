@@ -13,7 +13,7 @@
   <a href="https://github.com/Seramys/agentvault/actions/workflows/ci.yml"><img src="https://github.com/Seramys/agentvault/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-6D5BD0.svg" alt="License"></a>
   <img src="https://img.shields.io/badge/rust-stable-CE422B.svg" alt="Rust stable">
-  <img src="https://img.shields.io/badge/status-v0.1-0F9F6E.svg" alt="v0.1">
+  <img src="https://img.shields.io/badge/status-v0.1%20%C2%B7%20web-0F9F6E.svg" alt="v0.1 · web">
 </p>
 
 <p align="center">
@@ -23,15 +23,16 @@
 <p align="center">
   <a href="#understand-it-in-30-seconds">30 seconds</a> ·
   <a href="#quick-start">Quick start</a> ·
+  <a href="#web-console">Web console</a> ·
   <a href="#step-by-step-guide">Guide</a> ·
   <a href="#command-reference">Commands</a> ·
   <a href="#security-model">Security</a> ·
   <a href="#real-test-evidence">Evidence</a>
 </p>
 
-> **v0.1 scope**: layers 0 (secret custody), 1 (short-lived tickets + local broker) and 4 (audit + honeypots) are implemented. Sandboxing (L2) and egress control/DLP (L3) are explicitly out of scope. The web console is deferred; this repository ships the CLI only.
+> **Current scope**: layer 0 (secret custody), layer 1 (short-lived tickets + local broker), layer 4 (audit + honeypots), and a local web console with accounts/roles, tenant labels, SSE updates, signed audit verification and encrypted backups. Sandboxing (L2) and egress control/DLP (L3) remain future work.
 >
-> **In one sentence**: stop deciding whether a token belongs in `mcp.json`. Put it in the vault and let the agent exchange a ticket for it.
+> **In one sentence**: stop deciding whether a token belongs in `mcp.json`. Put it in the vault and let the agent exchange a ticket for it; open the local console when you need the whole picture.
 
 ---
 
@@ -47,6 +48,8 @@
 - [Five layers](#five-layers)
 - [Install](#install)
 - [Quick start](#quick-start)
+- [Web console](#web-console)
+- [Encrypted backups, signed audit and TOML round-trip](#encrypted-backups-signed-audit-and-toml-round-trip)
 - [Step-by-step guide](#step-by-step-guide)
   - [Step 0: see the whole picture](#step-0-see-the-whole-picture)
   - [Step 1: install and inspect](#step-1-install-and-inspect)
@@ -149,7 +152,9 @@ agentvault resolve --ticket av1...
 - A local CLI + local broker **credential lifecycle layer**.
 - A migration tool that moves plaintext env from MCP configs into the **OS keystore** and rewrites commands to `agentvault run ...`.
 - A ticket system with **TTL, max_uses, task tickets, child tickets, renew, rotate and revoke**.
-- A local observability layer with **JSONL audit, honeypot canaries and global revocation**.
+- A local observability layer with **JSONL audit, Ed25519 signatures, honeypot canaries and global revocation**.
+- A **local web console**: a single binary with an embedded React UI for secrets, tickets, agent onboarding, audit, honeypots, accounts/roles and tenant labels; loopback by default.
+- An **encrypted backup** tool (`AVBAK1` + ChaCha20-Poly1305), so a safety migration does not leave a plaintext `.bak` behind.
 
 **It is not:**
 
@@ -203,11 +208,15 @@ L0 + L1 already solve the three practical issues: no plaintext in configs, acces
 
 ### Option A: build from source (recommended for now)
 
-Requires stable Rust (edition 2021) on Windows, macOS or Linux.
+Requires stable Rust (edition 2021) on Windows, macOS or Linux. The web console also needs Node.js 20+ once; a CLI-only build can skip Node.
 
 ```bash
 git clone https://github.com/Seramys/agentvault.git
 cd agentvault
+
+# With the web console: embed the frontend at compile time
+cd webapp && npm ci && npm run build && cd ..
+
 cargo build --release
 ```
 
@@ -234,7 +243,7 @@ agentvault --version
 
 ### Option C: GitHub Releases
 
-Once releases are published, download the binary for your platform. For v0.1, building from source is the primary path so the binary matches this documentation.
+The Releases page has the v0.1.0 CLI binaries. Web console, encrypted backup and signed-audit features should be built from source until the next release publishes matching packages.
 
 ---
 
@@ -298,6 +307,117 @@ agentvault --home "$HOME/.agentvault-demo" revoke --all
 ```
 
 `revoke --all` bumps the global epoch. Every old ticket dies immediately; tickets issued afterwards use the new epoch.
+
+Prefer to start with the UI?
+
+```bash
+agentvault web --port 8787
+# open http://127.0.0.1:8787
+# first sign-in uses AGENTVAULT_HOME/web.token
+```
+
+---
+
+## Web console
+
+<p align="center">
+  <img src="docs/assets/web/console-hero.png" alt="AgentVault local web console" width="100%">
+</p>
+
+The CLI keeps plaintext out of configs. The web console answers the next question: what is happening right now? It is not a separate server product. `agentvault web` is still a local single binary; the React build is embedded at compile time and it reads the same `AGENTVAULT_HOME`, the same broker and the same audit trail.
+
+```bash
+# default 127.0.0.1:8787; prints the URL and web.token path
+agentvault web
+
+# another port
+agentvault web --port 8790
+```
+
+### Sign-in
+
+| Method | Best for | Where the credential lives |
+|---|---|---|
+| **Local session** | first run on a single machine, break-glass admin | `AGENTVAULT_HOME/web.token`, private file permissions |
+| **Local account** | multiple people on one machine, owner/admin/viewer separation | `web-accounts.json` with **Argon2id** hashes; session tokens stored as SHA-256 |
+
+<p align="center">
+  <img src="docs/assets/web/login.png" alt="Login" width="88%">
+</p>
+
+Sign in once with `web.token` as owner, then create long-lived accounts under **Settings → Accounts and tenants**. Recommended split:
+
+- **owner**: one account, creates/removes accounts and performs global revocation;
+- **admin**: day-to-day secrets, tickets and agent onboarding;
+- **viewer**: read-only dashboards and audit, suitable for on-call or audit staff;
+- sessions last 12 hours; viewer writes are rejected by the server, not merely hidden in the UI.
+
+> **Tenant is a label, not a hard isolation boundary.** It separates teams or purposes on the same machine for filtering and hand-off; v0.1 does not promise cross-tenant key isolation.
+
+### What you can do
+
+| Page | Key actions | Screenshot |
+|---|---|---|
+| **Overview** | active secrets, live tickets, 24h issued/denied, composition, recent events, SSE refresh | hero above |
+| **Secrets** | add/rotate/remove; filter env / token / json; masked input | [secrets.png](docs/assets/web/secrets.png) |
+| **Tickets** | one-use leaves, task parents, renew, revoke, global kill switch | [tickets.png](docs/assets/web/tickets.png) |
+| **Agents** | six adapters, candidate path picker, dry-run preview, copy Codex command | [agents.png](docs/assets/web/agents.png) · [agent-picker.png](docs/assets/web/agent-picker.png) |
+| **Audit** | filter events, copy audit command, hash-chain/signature verification via CLI | [audit.png](docs/assets/web/audit.png) |
+| **Honeypots** | create a canary, copy its token, simulate a trip, inspect hits | [honeypots.png](docs/assets/web/honeypots.png) |
+| **Settings** | backend fingerprint, ticket policy, accounts/roles, dangerous actions | [settings.png](docs/assets/web/settings.png) · [accounts.png](docs/assets/web/accounts.png) |
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/web/secrets.png" alt="Credentials"><br><sub>Secrets: names, types and status only; long-lived values never reach the page</sub></td>
+<td width="50%"><img src="docs/assets/web/tickets.png" alt="Tickets"><br><sub>Tickets: a parent keeps a task alive; leaves live for exactly one use</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/assets/web/agents.png" alt="Agents"><br><sub>Agents: choose a candidate path first, then preview the rewrite</sub></td>
+<td width="50%"><img src="docs/assets/web/audit.png" alt="Audit"><br><sub>Audit: append-only JSONL for issue, resolve, revoke and honeypot events</sub></td>
+</tr>
+</table>
+
+### Security boundaries
+
+- Binds `127.0.0.1` by default; non-loopback binding requires `AGENTVAULT_WEB_BIND` and at least one account.
+- `web.token`, `web-accounts.json` and `web-sessions.json` are written with private permissions; there is no “disable auth” switch.
+- The UI never returns long-lived secret values; credential creation uses masked input.
+- Remote deployment is not a default capability. If you must expose it, put it behind a reverse proxy, TLS and network ACLs. Never expose bare HTTP to the internet.
+
+---
+
+## Encrypted backups, signed audit and TOML round-trip
+
+### 1. Backups no longer leave plaintext behind
+
+```bash
+agentvault backup create --path ~/.codex/config.toml
+agentvault backup list --path ~/.codex/config.toml
+agentvault backup restore --backup ~/.codex/config.toml.bak.1795350000000.enc --path ~/.codex/config.toml
+agentvault init --refresh --cleanup-backups
+```
+
+| Item | Implementation |
+|---|---|
+| Format | `AVBAK1` magic + ChaCha20-Poly1305 |
+| Key | `backup/master` in the OS keystore |
+| Restore | re-parses JSON/TOML before overwriting |
+| Compatibility | `backup list` still reports legacy plaintext `*.bak.*` files |
+
+### 2. Audit signatures over a hash chain
+
+```bash
+agentvault audit --tail 20
+agentvault audit --verify
+agentvault audit --verify-signature
+agentvault audit --pubkey
+```
+
+The hash chain detects insertion/deletion; Ed25519 signatures detect rewriting. This is local tamper evidence, not a remote immutable log.
+
+### 3. Codex TOML is parsed with `toml_edit`
+
+Single/double quotes, escapes, multiline arrays, inline tables, dotted keys, comments, CRLF and BOM are preserved. Invalid TOML is rejected before writing; non-string args/env are marked `unsupported` and skipped. Real Codex config copies and edge-case corpora are part of the regression suite.
 
 ---
 
@@ -691,18 +811,27 @@ The audit trail is append-only JSONL. Rotation keeps the previous file.
 ```bash
 cargo test --workspace
 cargo build --release
+
+# Browser-level console test (Chrome + Playwright)
+cd webapp && npm run test:e2e
 ```
 
-Local result (Windows 11, release binary):
+Local result (Windows 11, 2026-11-22):
 
 ```text
-e2e:        9 passed
-adapters:  16 passed
-audit:      1 passed
-core:      10 passed
-keystore:   2 passed
-total:     38 passed, 0 failed
+e2e:        11 passed
+adapters:   24 passed
+corpus:      4 passed
+audit:       2 passed
+backup:      1 passed
+core:       10 passed
+keystore:    2 passed
+total:      54 passed, 0 failed, 1 ignored
+
+webapp Playwright: 2 passed (bootstrap token + login → add secret → issue ticket → pick agent path → filter audit)
 ```
+
+The ignored test is the Windows ConPTY masked-input integration test; it needs a real interactive terminal and is not faked as passing.
 
 <p align="center">
   <img src="docs/assets/diagrams/test-evidence.svg" alt="Test evidence" width="100%">
@@ -711,14 +840,16 @@ total:     38 passed, 0 failed
 Coverage is not a happy path:
 
 - JSON / Codex / Qoder config rewrites and idempotence;
-- unknown-field preservation, multi-line TOML args;
+- full TOML round-trip: quotes, escapes, multiline arrays, inline tables, dotted keys, comments, CRLF, BOM, unknown fields;
+- invalid TOML is rejected before writing, with backup restore;
 - one-use tickets, expired tickets, replay denial;
 - task hard-TTL caps, renew does not shorten;
 - revoke token / jti / all, rotation invalidates old tickets;
 - honeypot-triggered global revocation;
-- autostart toggles, single instance, broken pipe;
-- refresh against a real Codex config copy;
-- user-scope `env install`, idempotence, uninstall and restore.
+- Ed25519 audit signatures and hash-chain verification;
+- ChaCha20-Poly1305 encrypted backup create/restore/cleanup;
+- web token login, accounts/roles, viewer read-only, agent path picker, SSE refresh;
+- autostart toggles, single instance, broken pipe; refresh against a real Codex config copy.
 
 > There is no GUI-level Cursor/Qoder tool invocation automation, no macOS/Linux runtime validation, and no sandbox/egress. These are listed under known limits; they are not claimed as done.
 
@@ -753,10 +884,10 @@ agentvault init --keep-env KEY            # force keep
 
 ### Backups and failure recovery
 
-- Before writing: `mcp.json.bak.<timestamp>` / `config.toml.bak.<timestamp>`.
+- Before writing: encrypted `<config>.bak.<ms>.enc` (`AVBAK1` + ChaCha20-Poly1305, key in the OS keystore).
 - After writing: re-parse and verify the wrapped result; restore from backup on failure.
-- Backups contain the original plaintext. Delete them once the new config is verified.
-- `init --refresh` also backs up, but does not touch env.
+- `backup list` still reports legacy plaintext `*.bak.*` files for migration and cleanup.
+- `init --refresh --cleanup-backups` removes backups once the new config is verified.
 
 ---
 
@@ -781,8 +912,10 @@ agentvault init --keep-env KEY            # force keep
 | `revoke` | Revoke a ticket / secret / everything | `--ticket` `--secret` `--all` |
 | `rotate` | Rotate a value and invalidate old tickets | `--secret` |
 | `status` | Show secrets, bound agents and live tickets | `--json` |
-| `audit` | Read the JSONL audit trail | `--tail N` `--json` |
+| `audit` | Read the JSONL audit trail | `--tail N` `--json` `--event` `--since` `--export` `--verify` `--verify-signature` `--pubkey` |
 | `honeypot add/list/check` | Manage honeypot canaries | `--json` |
+| `backup create/restore/list` | Encrypted config backup, restore and listing | `--path` `--backup` |
+| `web` | Serve the local web console | `--port` `--dist`; remote bind needs `AGENTVAULT_WEB_BIND` + `AGENTVAULT_WEB_ALLOW_REMOTE=1` |
 | `daemon` | Run the broker in the foreground | `--detach` |
 | `stop` | Stop a background broker | `--home` |
 
@@ -831,12 +964,14 @@ Notes:
 
 This was not "a few unit tests and call it done". On a real Windows 11 machine:
 
-- **38 Rust tests**: `cargo test --workspace` all green.
+- **54 Rust tests passing, 1 ConPTY test explicitly ignored**: `cargo test --workspace`.
+- **2 browser-level Playwright tests**: one-time token bootstrap, plus login, add secret, issue ticket, pick agent path and filter audit.
 - **150 isolated CLI checks**: each with its own `--home`, covering init, tickets, revoke, rotate, env, doctor, autostart and broken pipe.
-- **Real Codex config copy**: copied the real `config.toml`, added a test server, ran init/refresh, then verified launcher and home with `codex mcp get`.
+- **Real Codex config copy**: copied the real 5003-byte `config.toml`, backed it up byte-for-byte with SHA-256, ran init/refresh, then verified launcher and home with `codex mcp get`.
 - **Real Cursor / Qoder probing**: verified the path registry, empty configs and project-first precedence.
 - **Real env write and restore**: user-scope `env install`, idempotence, `env uninstall` restore.
 - **Real attack semantics**: replay denied, expiry denied, global revocation, rotation invalidation, honeypot trigger.
+- **New regressions**: full TOML round-trip, encrypted backups, Ed25519 audit signatures, web roles and viewer read-only.
 
 <p align="center">
   <img src="docs/assets/terminal/replay-denied.svg" alt="Replay denied" width="100%">
@@ -890,9 +1025,26 @@ This was not "a few unit tests and call it done". On a real Windows 11 machine:
 
 - Append-only JSONL: timestamp, actor, event, secret, ticket, result.
 - `audit --tail N` to read.
+- Every line carries a `prev_hash`/`hash` chain; `audit --verify` reports the first break.
+- Every line is Ed25519-signed; `audit --verify-signature` verifies each line, `audit --pubkey` prints the public key.
 - Rotation keeps the old audit file.
 - Honeypot tokens are unique; a hit triggers global revocation.
 - Honeypot checks never reveal the real secret.
+
+### Web console
+
+- Binds `127.0.0.1` by default; non-loopback binding is opt-in and requires at least one account.
+- Local session token lives in `web.token`; account passwords use Argon2id; session tokens are stored as SHA-256.
+- owner/admin may write; viewer is forced read-only on the server.
+- Tenant labels are for filtering and hand-off, not a hard isolation boundary.
+- The page never returns long-lived secret values; SSE pushes state and events only.
+
+### Encrypted backups
+
+- `AVBAK1` + ChaCha20-Poly1305.
+- Key from the OS keystore (`backup/master`).
+- Restore reparses JSON/TOML before overwriting; a parse failure cannot leave a partial target.
+- `init --cleanup-backups` removes encrypted backups and legacy plaintext `.bak.*` files.
 
 ---
 
@@ -905,13 +1057,14 @@ These are real v0.1 limits, not footnotes:
 3. **Device binding is not TPM**: it is a fingerprint check, not hardware sealing.
 4. **Unmigrated plaintext is out of scope**: v0.1 handles configs it knows; secrets in scripts, `.env` files and logs are not covered.
 5. **Env migration is heuristic**: key markers + value shapes can be wrong; use dry-run + `--migrate-env` / `--keep-env`.
-6. **Codex TOML support is bounded**: quoted server names, inline/env sub-tables and multi-line args work; bare nested tables other than `.env` are ignored.
+6. **Codex TOML is a `toml_edit` round-trip**: quotes, escapes, multiline arrays, inline tables, dotted keys, comments, CRLF and BOM are covered; non-string args/env are marked `unsupported` and skipped.
 7. **JSON must be strict**: JSONC comments/trailing commas are rejected with a clear error; UTF-8 BOM is accepted.
 8. **`~/.claude.json` is top-level only**: `projects.*.mcpServers` are not rewritten automatically; use `--path` on a project `.mcp.json`.
 9. **`init` injects values, not tickets, by default**: compatible with stock MCP servers; ticket-aware use cases should use `run --name <same-name secret>` or `--session`.
-10. **No GUI automation**: Cursor/Qoder GUI-level tool invocation is not automated; CLI and config layers are verified.
+10. **GUI invocation is not automated**: Cursor/Qoder GUI-level tool invocation is not automated; CLI, config and web click paths are verified.
 11. **No macOS/Linux runtime validation yet**: code and unit tests are cross-platform, but the real-machine run is Windows 11.
-12. **Web console deferred**: this repository ships the CLI only; web code is not part of this release.
+12. **Web console is local-first**: accounts, roles and tenant labels exist, but it is not a hardened remote multi-tenant service. Remote exposure needs TLS, a reverse proxy, network ACLs and a backup policy.
+13. **The ConPTY masked-input test remains ignored**: it needs a real interactive terminal and is not faked as passing.
 
 ---
 
@@ -960,13 +1113,13 @@ agentvault run --name my/API_KEY -- node server.js
 # the child reads AGENTVAULT_TICKET and calls agentvault resolve
 ```
 
-### Q9: Why not a web console first?
+### Q9: How do the web console and CLI relate?
 
-The CLI is the core and the smallest trusted surface. Make config migration, ticket semantics, revocation and audit solid first; this repository ships the CLI only.
+The CLI remains the smallest trusted surface and the automation entry point. The web console is a local visual layer in the same binary, reading the same `AGENTVAULT_HOME` and broker. It binds `127.0.0.1` by default; sign in with `web.token` first, then create owner/admin/viewer accounts in Settings. It is not a cloud SaaS and does not expose remote access by default.
 
 ### Q10: Can a team share one vault?
 
-v0.1 is a single-machine, single-user local vault. Team sharing, central policy and remote audit are future work. Do not put the same home directory on a network share.
+v0.1 supports owner/admin/viewer accounts and tenant labels on one machine, which fits a small team sharing a workstation. It does **not** support putting the same home on a network share for concurrent use, and does not promise cross-machine isolation. Central policy, remote audit and real multi-tenancy are future work.
 
 ---
 
@@ -976,22 +1129,28 @@ v0.1 is a single-machine, single-user local vault. Team sharing, central policy 
 crates/
   core/      domain types, token signing, paths, JSON store
   keystore/  OS keystore + encrypted-file fallback + derivation
-  audit/     append-only JSONL audit
-  adapters/  JSON mcpServers + Codex TOML discovery and rewrite
+  audit/     append-only JSONL audit + hash chain + Ed25519 signatures
+  backup/    AVBAK1 encrypted config backups (ChaCha20-Poly1305)
+  adapters/  JSON mcpServers + full Codex TOML round-trip via toml_edit
   broker/    local TCP broker, ticket lifecycle, client
+  web/       axum console, auth/roles/tenants, SSE, embedded assets
   cli/       agentvault binary
+webapp/      React + Vite console UI, Playwright click test
 docs/
-  assets/    logo, diagrams, terminal evidence
+  assets/    logo, diagrams, terminal evidence, web screenshots
 ```
 
 Key entry points:
 
-- `crates/cli/src/main.rs`: command parsing, init/issue/run/doctor, etc.
+- `crates/cli/src/main.rs`: command parsing, init/issue/run/doctor/web, etc.
 - `crates/adapters/src/lib.rs`: path registry, JSON plan/apply/refresh, env heuristic.
-- `crates/adapters/src/codex.rs`: Codex TOML parsing and rewriting.
+- `crates/adapters/src/codex.rs`: full Codex TOML round-trip and fail-closed writes.
+- `crates/backup/src/lib.rs`: encrypted backups and restore.
+- `crates/audit/src/lib.rs`: hash chain and Ed25519 signatures.
 - `crates/broker/src/lib.rs`: local broker and ticket lifecycle.
 - `crates/core/src/token.rs`: HMAC ticket signing/verification.
 - `crates/keystore/src/lib.rs`: DPAPI / Keychain / Secret Service / file backend.
+- `crates/web/src/lib.rs`, `webapp/src/App.tsx`: console API and UI.
 
 ---
 
@@ -999,12 +1158,15 @@ Key entry points:
 
 - [x] L0: OS keystore, device binding, hardware fingerprint, signed tickets
 - [x] L1: local broker, short tickets, task/child/renew, rotate/revoke
-- [x] L4: JSONL audit, honeypot canaries, global revocation
+- [x] L4: JSONL audit, Ed25519 signatures, honeypot canaries, global revocation
 - [x] `init --refresh`: painless launcher/home update after an upgrade
 - [x] Embedded env reference guard (`${HOME}/...`, `%VAR%\...`)
+- [x] Web console: single binary, accounts/roles/tenant labels, SSE, path picker
+- [x] Encrypted backups (AVBAK1), full TOML round-trip, audit signature verification
+- [ ] Desktop shell: local preview done, not committed to this repository yet
 - [ ] L2: process sandbox / microVM
 - [ ] L3: egress allowlist / DLP
-- [ ] Web console (separate repo / later version)
+- [ ] Hardened remote web deployment / central policy / strong multi-tenancy
 - [ ] macOS/Linux real-machine validation and CI coverage
 - [ ] TPM / Secure Enclave binding
 - [ ] Team policy and central audit

@@ -232,18 +232,18 @@ fn spawn_without_inheriting_stdio(
                     continue;
                 }
                 let mut flags = 0u32;
-                if GetHandleInformation(handle, &mut flags) != 0 && flags & HANDLE_FLAG_INHERIT != 0
+                if GetHandleInformation(handle, &mut flags) != 0
+                    && flags & HANDLE_FLAG_INHERIT != 0
+                    && SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) != 0
                 {
-                    if SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) != 0 {
-                        saved.push(handle);
-                    }
+                    saved.push(handle);
                 }
             }
             let result = command.spawn();
             for handle in saved {
                 SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
             }
-            return result;
+            result
         }
     }
     #[cfg(not(windows))]

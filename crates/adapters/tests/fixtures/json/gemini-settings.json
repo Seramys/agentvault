@@ -1,0 +1,12 @@
+{
+  "theme": "Default",
+  "selectedAuthType": "oauth-personal",
+  "mcpServers": {
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"],
+      "env": { "FETCH_API_KEY": "sk-corpus-gemini-fetch" },
+      "trust": true
+    }
+  }
+}

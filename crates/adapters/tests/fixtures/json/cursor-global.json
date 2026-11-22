@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "env": {
+        "DATABASE_URL": "postgres://demo:demo@localhost/demo",
+        "PGSSLMODE": "disable",
+        "TOKEN_BUDGET": "4096"
+      },
+      "cwd": "${workspaceFolder}",
+      "timeout": 30
+    },
+    "already-wrapped": {
+      "command": "C:\\Tools\\agentvault.exe",
+      "args": ["--home", "C:\\Users\\demo\\.agentvault", "run", "--name", "already-wrapped", "--", "node", "server.js"],
+      "env": { "LEGACY_TOKEN": "must-not-be-migrated" }
+    }
+  },
+  "editor": { "fontSize": 13 }
+}

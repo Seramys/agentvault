@@ -26,6 +26,16 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Build web console
+        working-directory: webapp
+        run: npm ci && npm run build
+
       - name: Format
         if: runner.os == 'Linux'
         run: cargo fmt --all -- --check

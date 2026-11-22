@@ -5,18 +5,13 @@ use std::collections::HashSet;
 
 pub const SCHEMA_VERSION: u32 = 1;
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SecretKind {
     Env,
+    #[default]
     Token,
     Json,
-}
-
-impl Default for SecretKind {
-    fn default() -> Self {
-        SecretKind::Token
-    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

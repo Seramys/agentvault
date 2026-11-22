@@ -1,0 +1,11 @@
+# Codex 0.21-era config: the original `[mcp_servers.*]` table shape.
+# Kept as a compatibility sample; do not "modernize" it.
+model = "gpt-4o"
+
+[mcp_servers.filesystem]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+
+[mcp_servers.filesystem.env]
+API_KEY = "sk-corpus-legacy-filesystem"
+LOG_LEVEL = "info"

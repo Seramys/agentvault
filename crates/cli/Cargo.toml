@@ -16,9 +16,13 @@ path = "src/main.rs"
 agentvault-core.workspace = true
 agentvault-keystore.workspace = true
 agentvault-audit.workspace = true
+agentvault-backup.workspace = true
 agentvault-adapters.workspace = true
 agentvault-broker.workspace = true
+agentvault-web.workspace = true
+
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
+rpassword = "7"

@@ -1,0 +1,20 @@
+{
+  "numStartups": 42,
+  "installMethod": "npm",
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+      "env": {
+        "API_KEY": "sk-corpus-claude-filesystem",
+        "LOG_LEVEL": "info"
+      },
+      "type": "stdio"
+    },
+    "docs": {
+      "url": "https://docs.example.com/mcp",
+      "type": "sse",
+      "headers": { "Authorization": "Bearer placeholder" }
+    }
+  }
+}

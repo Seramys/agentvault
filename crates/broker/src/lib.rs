@@ -110,6 +110,9 @@ impl Broker {
         store::write_json(&self.root.tickets(), &file)
     }
 
+    // The issuer is the public signing entry point; its parameters mirror the
+    // ticket policy one-to-one, so a struct would only add call-site noise.
+    #[allow(clippy::too_many_arguments)]
     pub fn issue(
         &self,
         secret_name: &str,
@@ -194,7 +197,7 @@ impl Broker {
         }
         self.persist_tickets()?;
 
-        audit::append(
+        audit::append_signed(
             &self.root,
             &AuditEvent::new(audit::EV_TICKET_ISSUE, sub, "ok")
                 .secret(&record.name)
@@ -234,7 +237,7 @@ impl Broker {
                 if signature_mismatch {
                     if let Some(peeked) = TokenIssuer::peek(token) {
                         if peeked.gepoch < global_epoch {
-                            audit::append(
+                            audit::append_signed(
                                 &self.root,
                                 &AuditEvent::new(audit::EV_TICKET_RESOLVE, "cli", "revoked")
                                     .secret(&peeked.secret)
@@ -258,7 +261,7 @@ impl Broker {
         let now = now_ms();
 
         if self.revoked().is_ticket_revoked(&claims.jti) {
-            audit::append(
+            audit::append_signed(
                 &self.root,
                 &AuditEvent::new(audit::EV_TICKET_RESOLVE, &claims.sub, "revoked")
                     .secret(&claims.secret)
@@ -328,7 +331,7 @@ impl Broker {
         if let Some(hit) = trip {
             store::save_honeypots(&self.root, &self.honeypots())?;
             self.revoke_all()?;
-            audit::append(
+            audit::append_signed(
                 &self.root,
                 &AuditEvent::new(audit::EV_HONEYPOT_TRIGGERED, &claims.sub, "blocked")
                     .secret(&claims.secret)
@@ -340,7 +343,7 @@ impl Broker {
             ));
         }
 
-        audit::append(
+        audit::append_signed(
             &self.root,
             &AuditEvent::new(audit::EV_TICKET_RESOLVE, &claims.sub, "ok")
                 .secret(&claims.secret)
@@ -446,7 +449,7 @@ impl Broker {
             );
         }
         self.persist_tickets()?;
-        audit::append(
+        audit::append_signed(
             &self.root,
             &AuditEvent::new(audit::EV_TICKET_ISSUE, &claims.sub, "ok")
                 .secret(&record.name)
@@ -530,7 +533,7 @@ impl Broker {
 
         let renewed = issuer.issue(&new_claims)?;
         self.persist_tickets()?;
-        audit::append(
+        audit::append_signed(
             &self.root,
             &AuditEvent::new(audit::EV_TICKET_ISSUE, &new_claims.sub, "renewed")
                 .secret(&new_claims.secret)
@@ -578,7 +581,7 @@ impl Broker {
             }
         }
         self.persist_tickets()?;
-        audit::append(
+        audit::append_signed(
             &self.root,
             &AuditEvent::new(audit::EV_TICKET_REVOKE, "cli", "ok")
                 .ticket(jti)
@@ -607,7 +610,7 @@ impl Broker {
             tickets.retain(|_, state| state.claims.secret != name);
         }
         self.persist_tickets()?;
-        audit::append(
+        audit::append_signed(
             &self.root,
             &AuditEvent::new(audit::EV_TICKET_REVOKE, "cli", "ok").secret(name),
         )?;
@@ -625,7 +628,7 @@ impl Broker {
             tickets.clear();
         }
         self.persist_tickets()?;
-        audit::append(
+        audit::append_signed(
             &self.root,
             &AuditEvent::new(audit::EV_REVOKE_ALL, "cli", "ok"),
         )?;
@@ -662,7 +665,7 @@ impl Broker {
             tickets.retain(|_, state| state.claims.secret != name);
         }
         self.persist_tickets()?;
-        audit::append(
+        audit::append_signed(
             &self.root,
             &AuditEvent::new(audit::EV_SECRET_ROTATE, "cli", "ok")
                 .secret(name)
@@ -733,7 +736,7 @@ impl Broker {
             }
             store::save_config(&self.root, &cfg)?;
         }
-        audit::append(
+        audit::append_signed(
             &self.root,
             &AuditEvent::new(audit::EV_SECRET_ADD, "cli", "ok").secret(name),
         )?;
@@ -756,7 +759,7 @@ impl Broker {
             cfg.secrets.retain(|s| s.name != name);
             store::save_config(&self.root, &cfg)?;
         }
-        audit::append(
+        audit::append_signed(
             &self.root,
             &AuditEvent::new(audit::EV_SECRET_REMOVE, "cli", "ok").secret(name),
         )?;
@@ -773,7 +776,7 @@ impl Broker {
             }
             removed
         };
-        audit::append(
+        audit::append_signed(
             &self.root,
             &AuditEvent::new("secret.unrevoke", "cli", "ok").secret(name),
         )?;
@@ -888,7 +891,7 @@ impl Broker {
         match hit {
             Some(item) => {
                 self.revoke_all()?;
-                audit::append(
+                audit::append_signed(
                     &self.root,
                     &AuditEvent::new(audit::EV_HONEYPOT_TRIGGERED, "cli", "blocked")
                         .secret(&item.name)

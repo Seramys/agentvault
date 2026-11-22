@@ -2,16 +2,24 @@ use serde_json::Value;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
+static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 struct Ctx {
+    _guard: MutexGuard<'static, ()>,
     home: PathBuf,
     work: PathBuf,
 }
 
 impl Ctx {
     fn new(label: &str) -> Self {
+        // Brokers are separate processes; running every e2e test in parallel
+        // makes startup readiness compete for CPU and can exceed the 15s wait.
+        let guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let base =
             std::env::temp_dir().join(format!("av-e2e-{}-{}-{}", std::process::id(), n, label));
@@ -19,7 +27,11 @@ impl Ctx {
         let work = base.join("work");
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&work).unwrap();
-        Self { home, work }
+        Self {
+            _guard: guard,
+            home,
+            work,
+        }
     }
 
     fn bin(&self) -> &'static str {
@@ -238,9 +250,9 @@ fn tickets_respect_hard_limits_revocation_and_rotation() {
         "db",
         "--task",
         "--ttl",
-        "2s",
+        "60s",
         "--hard-ttl",
-        "2s",
+        "60s",
         "--json",
     ]))
     .unwrap();
@@ -256,11 +268,14 @@ fn tickets_respect_hard_limits_revocation_and_rotation() {
         serde_json::from_str(&ctx.ok(&["child", "--parent", parent, "--ttl", "7d", "--json"]))
             .unwrap();
     assert_eq!(child["capped_by_parent"], true);
-    assert!(child["ttl_secs"].as_u64().unwrap() <= 5);
+    assert!(child["ttl_secs"].as_u64().unwrap() <= 60);
     assert!(child["exp"].as_i64().unwrap() <= hard_exp);
 
-    std::thread::sleep(std::time::Duration::from_secs(3));
-    let expired = ctx.run(&["resolve", "--ticket", child["ticket"].as_str().unwrap()]);
+    let expiring: Value =
+        serde_json::from_str(&ctx.ok(&["issue", "--secret", "db", "--ttl", "1s", "--json"]))
+            .unwrap();
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let expired = ctx.run(&["resolve", "--ticket", expiring["ticket"].as_str().unwrap()]);
     assert!(!expired.status.success());
     assert!(String::from_utf8_lossy(&expired.stderr).contains("expired"));
 
@@ -360,4 +375,59 @@ fn doctor_reports_sources_and_agent_configs() {
     assert!(output.contains("home from: AGENTVAULT_HOME"), "{output}");
     assert!(output.contains("[x] cursor"), "{output}");
     assert!(output.contains("cursor"), "{output}");
+}
+
+#[test]
+fn codex_invalid_toml_is_rejected_without_writing() {
+    let ctx = Ctx::new("codex-invalid");
+    let original = "[mcp_servers.db\ncommand = \"npx\"\n";
+    let path = ctx.write("config.toml", original);
+    let output = ctx.run(&["init", "--agent", "codex", "--path", path.to_str().unwrap()]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("invalid Codex TOML"), "{stderr}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+}
+
+#[test]
+fn codex_init_preserves_bom_crlf_comments_and_escapes() {
+    let ctx = Ctx::new("codex-format");
+    let original = "\u{feff}# keep comment\r\nmodel = \"gpt-5\"\r\n\r\n[mcp_servers.db]\r\ncommand = \"npx\" # inline comment\r\nargs = [\r\n  \"-y\",\r\n  \"@modelcontextprotocol/server-postgres\",\r\n]\r\nenv = { DATABASE_URL = 'postgres://demo:demo@localhost/demo', LOG_LEVEL = \"info\" }\r\n";
+    let path = ctx.write("config.toml", original);
+    let output = ctx.ok(&["init", "--agent", "codex", "--path", path.to_str().unwrap()]);
+    assert!(output.contains("wrapped 1 server(s)"), "{output}");
+
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(bytes.starts_with(&[0xEF, 0xBB, 0xBF]), "BOM was dropped");
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(text.contains("# keep comment"), "{text}");
+    assert!(text.contains("model = \"gpt-5\""), "{text}");
+    assert!(text.contains("LOG_LEVEL"), "{text}");
+    assert!(
+        !text.contains("postgres://demo:demo@localhost/demo"),
+        "{text}"
+    );
+    assert!(!text.contains("DATABASE_URL = "), "{text}");
+    let without_crlf = text.replace("\r\n", "");
+    assert!(!without_crlf.contains('\n'), "mixed newlines: {text:?}");
+
+    let backup = std::fs::read_dir(&ctx.work)
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.contains(".bak."))
+                .unwrap_or(false)
+        })
+        .expect("backup file missing");
+    let backup_bytes = std::fs::read(&backup).unwrap();
+    assert!(
+        backup_bytes.starts_with(b"AVBAK1"),
+        "backup is not encrypted"
+    );
+    assert!(
+        !String::from_utf8_lossy(&backup_bytes).contains("postgres://demo:demo@localhost/demo"),
+        "backup leaked plaintext secret"
+    );
 }

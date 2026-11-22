@@ -45,7 +45,7 @@ mod imp {
 
     pub fn set(dir: &Path, name: &str, value: &str) -> Result<()> {
         let mut vault = read_vault(dir)?;
-        vault.entries.insert(name.to_string(), protect(value)?);
+        vault.entries.insert(name.to_string(), protect(dir, value)?);
         write_vault(dir, &vault)
     }
 
@@ -114,15 +114,29 @@ mod imp {
         agentvault_core::util::atomic_write(&vault_path(dir), &data)
     }
 
-    fn protect(value: &str) -> Result<String> {
+    fn protect(dir: &Path, value: &str) -> Result<String> {
+        // Never put plaintext (even base64) on the PowerShell command line:
+        // other processes running as the same user can read it there. The
+        // value goes through a short-lived private temp file instead.
+        std::fs::create_dir_all(dir)?;
         let plain_b64 = STANDARD.encode(value.as_bytes());
+        let temp = dir.join(format!(
+            ".dpapi-protect-{}-{}.tmp",
+            std::process::id(),
+            agentvault_core::util::now_ms()
+        ));
+        crate::write_private(&temp, &plain_b64)?;
+        let temp_path = temp.display().to_string().replace('\'', "''");
         let script = format!(
             "Add-Type -AssemblyName System.Security; \
-             $b=[Convert]::FromBase64String('{plain_b64}'); \
+             $plain = Get-Content -Raw '{temp_path}'; \
+             $b=[Convert]::FromBase64String($plain.Trim()); \
              $p=[Security.Cryptography.ProtectedData]::Protect($b,$null,'CurrentUser'); \
              [Convert]::ToBase64String($p)"
         );
-        run_ps(&script)
+        let result = run_ps(&script);
+        let _ = std::fs::remove_file(&temp);
+        result
     }
 
     fn unprotect(sealed: &str) -> Result<String> {

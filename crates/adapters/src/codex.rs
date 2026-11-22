@@ -1,4 +1,4 @@
-//! Minimal Codex `config.toml` adapter.
+//! Codex `config.toml` adapter backed by the full TOML parser in `toml_edit`.
 //!
 //! Codex stores MCP servers as TOML tables:
 //!
@@ -12,27 +12,23 @@
 //! DATABASE_URL = "postgres://..."
 //! ```
 //!
-//! Only the `[mcp_servers.*]` subset is understood. Every other line is
-//! preserved so unrelated Codex settings and comments survive a rewrite.
+//! Only the `mcp_servers.*` keys are interpreted. `toml_edit` preserves
+//! comments, unknown settings, key order and formatting for everything else.
 
-use agentvault_core::Result;
+use agentvault_core::{Error, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use toml_edit::{Array, DocumentMut, Item, TableLike, Value};
 
 #[derive(Clone, Debug, Default)]
 pub struct CodexServer {
     pub name: String,
-    pub header_line: usize,
-    pub end_line: usize,
     pub command: Option<String>,
-    pub command_line: Option<usize>,
     pub args: Vec<String>,
-    pub args_line: Option<usize>,
-    pub args_end_line: Option<usize>,
     pub env: BTreeMap<String, String>,
-    pub env_line: Option<usize>,
-    pub env_header_line: Option<usize>,
-    pub env_table_lines: Vec<(String, usize)>,
+    /// Semantic limitations that prevent safe wrapping (for example a
+    /// non-string `args` entry). Such servers are reported and left untouched.
+    pub unsupported: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -45,163 +41,111 @@ pub struct CodexChange {
 
 #[derive(Clone, Debug)]
 pub struct CodexConfig {
-    pub lines: Vec<String>,
+    doc: DocumentMut,
     pub servers: Vec<CodexServer>,
+    /// File-level traits preserved from the source so a rewrite stays
+    /// byte-faithful for editors and Windows tooling.
+    bom: bool,
+    crlf: bool,
+    trailing_newline: bool,
 }
 
 impl CodexConfig {
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path)?;
-        let text = text.strip_prefix('\u{feff}').unwrap_or(&text).to_string();
-        Ok(Self::parse(text))
+        Self::parse(text)
     }
 
-    pub fn parse(text: String) -> Self {
-        let lines: Vec<String> = text.lines().map(str::to_string).collect();
-        let mut servers: Vec<CodexServer> = Vec::new();
-        let mut current: Option<usize> = None;
-        let mut in_env_table = false;
-        // Multi-line arrays are common in real Codex configs:
-        //   args = [
-        //     "-y",
-        //     "@scope/server",
-        //   ]
-        // Accumulate them into one logical value and remember the line range so
-        // the rewrite can replace the whole array instead of leaving stray lines.
-        let mut pending_args: Option<(usize, usize, String)> = None;
+    pub fn parse(text: String) -> Result<Self> {
+        let bom = text.starts_with('\u{feff}');
+        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+        let crlf = text.contains("\r\n");
+        let trailing_newline = text.ends_with('\n') || text.ends_with('\r');
+        let doc: DocumentMut = text
+            .parse()
+            .map_err(|error| Error::Other(format!("invalid Codex TOML: {error}")))?;
+        let servers = Self::read_servers(&doc);
+        Ok(Self {
+            doc,
+            servers,
+            bom,
+            crlf,
+            trailing_newline,
+        })
+    }
 
-        for (idx, raw) in lines.iter().enumerate() {
-            let line = raw.trim();
-            if line.starts_with('#') || line.is_empty() {
-                continue;
-            }
+    pub fn has_bom(&self) -> bool {
+        self.bom
+    }
 
-            if let Some((start, server_index, mut accumulated)) = pending_args.take() {
-                accumulated.push(' ');
-                accumulated.push_str(strip_inline_comment(line).trim());
-                if array_is_closed(&accumulated) {
-                    let server = &mut servers[server_index];
-                    server.args = parse_array(&accumulated);
-                    server.args_line = Some(start);
-                    server.args_end_line = Some(idx);
-                } else {
-                    pending_args = Some((start, server_index, accumulated));
-                }
-                continue;
-            }
+    pub fn uses_crlf(&self) -> bool {
+        self.crlf
+    }
 
-            if let Some(rest) = section_body(line, "mcp_servers") {
-                let Some((server_name, is_env)) = parse_section(&rest) else {
-                    // A nested table such as `[mcp_servers.db.timeout]` is not
-                    // a server definition; stop attributing its keys to the
-                    // current server.
-                    if let Some(prev) = current.take() {
-                        servers[prev].end_line = idx;
-                    }
-                    in_env_table = false;
-                    continue;
-                };
-                if is_env {
-                    // A `[mcp_servers.NAME.env]` table belongs to the server.
-                    let target = current
-                        .filter(|ci| servers[*ci].name == server_name)
-                        .or_else(|| servers.iter().rposition(|s| s.name == server_name));
-                    match target {
-                        Some(ti) => {
-                            servers[ti].env_header_line = Some(idx);
-                            servers[ti].end_line = lines.len();
-                            current = Some(ti);
-                        }
-                        None => {
-                            if let Some(prev) = current.take() {
-                                servers[prev].end_line = idx;
-                            }
-                            servers.push(CodexServer {
-                                name: server_name,
-                                header_line: idx,
-                                end_line: lines.len(),
-                                env_header_line: Some(idx),
-                                ..Default::default()
-                            });
-                            current = Some(servers.len() - 1);
-                        }
-                    }
-                    in_env_table = true;
-                    continue;
-                }
-
-                if let Some(prev) = current.take() {
-                    servers[prev].end_line = idx;
-                }
+    fn read_servers(doc: &DocumentMut) -> Vec<CodexServer> {
+        let mut servers = Vec::new();
+        let Some(root) = doc.get("mcp_servers").and_then(Item::as_table_like) else {
+            return servers;
+        };
+        for (name, item) in root.iter() {
+            let Some(table) = item.as_table_like() else {
                 servers.push(CodexServer {
-                    name: server_name,
-                    header_line: idx,
-                    end_line: lines.len(),
+                    name: name.to_string(),
+                    unsupported: Some("mcp server is not a table".into()),
                     ..Default::default()
                 });
-                current = Some(servers.len() - 1);
-                in_env_table = false;
-                continue;
-            }
-
-            if line.starts_with('[') {
-                if let Some(prev) = current.take() {
-                    servers[prev].end_line = idx;
-                }
-                in_env_table = false;
-                continue;
-            }
-
-            let Some(ci) = current else {
                 continue;
             };
-            let server = &mut servers[ci];
 
-            if in_env_table {
-                if let Some((key, value)) = parse_key_value(line) {
-                    server.env.insert(key.clone(), value);
-                    server.env_table_lines.push((key, idx));
-                }
-                continue;
-            }
-
-            if let Some((key, value)) = parse_key_value(line) {
-                match key.as_str() {
-                    "command" => {
-                        server.command = Some(unquote(&value));
-                        server.command_line = Some(idx);
+            let mut unsupported = None;
+            let command = match table.get("command") {
+                None => None,
+                Some(item) => match item.as_str() {
+                    Some(value) => Some(value.to_string()),
+                    None => {
+                        unsupported = Some("command is not a string".into());
+                        None
                     }
-                    "args" => {
-                        if value.trim_start().starts_with('[') && !array_is_closed(&value) {
-                            server.args_line = Some(idx);
-                            server.args_end_line = Some(idx);
-                            pending_args = Some((idx, ci, value));
-                        } else {
-                            server.args = parse_array(&value);
-                            server.args_line = Some(idx);
-                            server.args_end_line = Some(idx);
+                },
+            };
+
+            let args = match table.get("args") {
+                None => Vec::new(),
+                Some(item) => match item.as_array() {
+                    None => {
+                        unsupported = Some("args is not an array".into());
+                        Vec::new()
+                    }
+                    Some(array) => {
+                        let mut args = Vec::new();
+                        for value in array.iter() {
+                            if let Some(value) = value.as_str() {
+                                args.push(value.to_string());
+                            } else {
+                                unsupported = Some("args contains a non-string".into());
+                            }
                         }
+                        args
                     }
-                    "env" => {
-                        server.env = parse_inline_table(&value);
-                        server.env_line = Some(idx);
-                    }
-                    _ => {}
-                }
-            }
-        }
+                },
+            };
 
-        if let Some((start, server_index, accumulated)) = pending_args {
-            let server = &mut servers[server_index];
-            server.args = parse_array(&accumulated);
-            server.args_line = Some(start);
-            server.args_end_line = Some(lines.len().saturating_sub(1));
+            let env = read_env(table, &mut unsupported);
+            servers.push(CodexServer {
+                name: name.to_string(),
+                command,
+                args,
+                env,
+                unsupported,
+            });
         }
-
-        Self { lines, servers }
+        servers
     }
 
     pub fn is_wrapped(server: &CodexServer) -> bool {
+        if server.unsupported.is_some() {
+            return false;
+        }
         let Some(command) = server.command.as_deref() else {
             return false;
         };
@@ -215,29 +159,12 @@ impl CodexConfig {
     pub fn plan_with(&self, policy: &crate::Policy) -> Vec<CodexChange> {
         self.servers
             .iter()
-            .filter(|s| s.command.is_some() && !Self::is_wrapped(s))
-            .map(|s| {
-                let migrated = secret_env(s, policy);
-                let migrated_keys: BTreeSet<String> =
-                    migrated.iter().map(|(key, _)| key.clone()).collect();
-                CodexChange {
-                    server: s.name.clone(),
-                    before: format!(
-                        "{} {}",
-                        s.command.clone().unwrap_or_default(),
-                        s.args.join(" ")
-                    )
-                    .trim()
-                    .to_string(),
-                    remaining_env: s
-                        .env
-                        .keys()
-                        .filter(|key| !migrated_keys.contains(*key))
-                        .cloned()
-                        .collect(),
-                    migrated_env: migrated,
-                }
+            .filter(|server| {
+                server.unsupported.is_none()
+                    && server.command.is_some()
+                    && !Self::is_wrapped(server)
             })
+            .map(|server| change_for(server, policy))
             .collect()
     }
 
@@ -262,23 +189,23 @@ impl CodexConfig {
         policy: &crate::Policy,
     ) -> Vec<CodexChange> {
         let mut changes = Vec::new();
-        let mut edits: Vec<(usize, usize, Vec<String>)> = Vec::new();
+        let Some(root) = self
+            .doc
+            .get_mut("mcp_servers")
+            .and_then(Item::as_table_like_mut)
+        else {
+            return changes;
+        };
 
-        for server in &self.servers {
-            if server.command.is_none() || Self::is_wrapped(server) {
+        for server in self.servers.clone() {
+            if server.unsupported.is_some() || server.command.is_none() || Self::is_wrapped(&server)
+            {
                 continue;
             }
-            let before = format!(
-                "{} {}",
-                server.command.clone().unwrap_or_default(),
-                server.args.join(" ")
-            )
-            .trim()
-            .to_string();
-            let migrated = secret_env(server, policy);
+
+            let migrated = secret_env(&server, policy);
             let migrated_keys: BTreeSet<String> =
                 migrated.iter().map(|(key, _)| key.clone()).collect();
-
             let mut args = Vec::new();
             if let Some(home) = home {
                 args.push("--home".to_string());
@@ -295,76 +222,20 @@ impl CodexConfig {
             args.push(server.command.clone().unwrap_or_default());
             args.extend(server.args.clone());
 
-            let mut rendered = vec![self.lines[server.header_line].clone()];
-            rendered.push(format!("command = {}", toml_quote(launcher)));
-            rendered.push(format!(
-                "args = [{}]",
-                args.iter()
-                    .map(|a| toml_quote(a))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-
-            let env_table_keys: BTreeSet<String> = server
-                .env_table_lines
-                .iter()
-                .map(|(key, _)| key.clone())
-                .collect();
-            let kept_inline: BTreeMap<&String, &String> = server
-                .env
-                .iter()
-                .filter(|(key, _)| !migrated_keys.contains(*key) && !env_table_keys.contains(*key))
-                .collect();
-            if server.env_header_line.is_none() && !kept_inline.is_empty() {
-                rendered.push(format!(
-                    "env = {{ {} }}",
-                    kept_inline
-                        .iter()
-                        .map(|(k, v)| format!("{} = {}", toml_key(k), toml_quote(v)))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
+            let Some(item) = root.get_mut(&server.name) else {
+                continue;
+            };
+            let Some(table) = item.as_table_like_mut() else {
+                continue;
+            };
+            write_wrapped_command(table, launcher, &args);
+            if !migrated_keys.is_empty() {
+                remove_env_keys(table, &migrated_keys);
             }
 
-            let env_line_idx: BTreeSet<usize> =
-                server.env_table_lines.iter().map(|(_, i)| *i).collect();
-            for idx in (server.header_line + 1)..server.end_line {
-                let in_args = server
-                    .args_line
-                    .map(|start| idx >= start && idx <= server.args_end_line.unwrap_or(start))
-                    .unwrap_or(false);
-                if Some(idx) == server.command_line || in_args || Some(idx) == server.env_line {
-                    continue;
-                }
-                if Some(idx) == server.env_header_line {
-                    rendered.push(self.lines[idx].clone());
-                    // Inline env values that are not migrated must survive even
-                    // when the server also uses an env sub-table.
-                    for (key, value) in &kept_inline {
-                        rendered.push(format!("{} = {}", toml_key(key), toml_quote(value)));
-                    }
-                    continue;
-                }
-                if env_line_idx.contains(&idx) {
-                    let key = server
-                        .env_table_lines
-                        .iter()
-                        .find(|(_, i)| *i == idx)
-                        .map(|(k, _)| k.clone())
-                        .unwrap_or_default();
-                    if migrated_keys.contains(&key) {
-                        continue;
-                    }
-                    rendered.push(self.lines[idx].clone());
-                    continue;
-                }
-                rendered.push(self.lines[idx].clone());
-            }
-
-            edits.push((server.header_line, server.end_line, rendered));
             changes.push(CodexChange {
                 server: server.name.clone(),
-                before,
+                before: before_command(&server),
                 remaining_env: server
                     .env
                     .keys()
@@ -375,10 +246,8 @@ impl CodexConfig {
             });
         }
 
-        // Apply from the bottom so earlier line numbers stay valid.
-        edits.sort_by_key(|(start, _, _)| std::cmp::Reverse(*start));
-        for (start, end, replacement) in edits {
-            self.lines.splice(start..end, replacement);
+        if !changes.is_empty() {
+            self.servers = Self::read_servers(&self.doc);
         }
         changes
     }
@@ -387,9 +256,16 @@ impl CodexConfig {
     /// leaving their env, timeout and wrapped command untouched.
     pub fn refresh_launcher(&mut self, launcher: &str, home: Option<&Path>) -> Vec<CodexChange> {
         let mut changes = Vec::new();
-        let mut edits: Vec<(usize, usize, Vec<String>)> = Vec::new();
-        for server in &self.servers {
-            if !Self::is_wrapped(server) {
+        let Some(root) = self
+            .doc
+            .get_mut("mcp_servers")
+            .and_then(Item::as_table_like_mut)
+        else {
+            return changes;
+        };
+
+        for server in self.servers.clone() {
+            if !Self::is_wrapped(&server) {
                 continue;
             }
             let Some(run_index) = crate::wrapped_run_index(&server.args) else {
@@ -402,29 +278,17 @@ impl CodexConfig {
             {
                 continue;
             }
-            let (Some(command_line), Some(args_start)) = (server.command_line, server.args_line)
-            else {
-                continue;
-            };
-            let args_end = server.args_end_line.unwrap_or(args_start);
-            let before = format!(
-                "{} {}",
-                server.command.clone().unwrap_or_default(),
-                server.args.join(" ")
-            )
-            .trim()
-            .to_string();
+
             let mut args = Vec::new();
             let mut index = 0;
             while index < old_prefix.len() {
                 match old_prefix[index].as_str() {
                     "--home" => index += 2,
                     value if value.starts_with("--home=") => index += 1,
-                    "--no-autostart" => {
-                        args.push("--no-autostart".to_string());
+                    value => {
+                        args.push(value.to_string());
                         index += 1;
                     }
-                    _ => index += 1,
                 }
             }
             if let Some(home) = home {
@@ -433,47 +297,145 @@ impl CodexConfig {
             }
             args.extend_from_slice(&server.args[run_index..]);
 
-            let mut rendered = vec![self.lines[server.header_line].clone()];
-            rendered.push(format!("command = {}", toml_quote(launcher)));
-            rendered.push(format!(
-                "args = [{}]",
-                args.iter()
-                    .map(|arg| toml_quote(arg))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-            for idx in (server.header_line + 1)..server.end_line {
-                if idx == command_line || (idx >= args_start && idx <= args_end) {
-                    continue;
-                }
-                rendered.push(self.lines[idx].clone());
-            }
-            edits.push((server.header_line, server.end_line, rendered));
+            let Some(item) = root.get_mut(&server.name) else {
+                continue;
+            };
+            let Some(table) = item.as_table_like_mut() else {
+                continue;
+            };
+            write_wrapped_command(table, launcher, &args);
             changes.push(CodexChange {
                 server: server.name.clone(),
-                before,
+                before: before_command(&server),
                 migrated_env: Vec::new(),
                 remaining_env: server.env.keys().cloned().collect(),
             });
         }
 
-        edits.sort_by_key(|(start, _, _)| std::cmp::Reverse(*start));
-        for (start, end, replacement) in edits {
-            self.lines.splice(start..end, replacement);
-        }
         if !changes.is_empty() {
-            let reparsed = Self::parse(self.lines.join("\n"));
-            self.lines = reparsed.lines;
-            self.servers = reparsed.servers;
+            self.servers = Self::read_servers(&self.doc);
         }
         changes
     }
 
-    pub fn save(&self, path: &Path) -> Result<()> {
-        let mut text = self.lines.join("\n");
-        text.push('\n');
-        agentvault_core::util::atomic_write(path, text.as_bytes())
+    pub fn render(&self) -> String {
+        self.doc.to_string()
     }
+
+    pub fn save(&self, path: &Path) -> Result<()> {
+        let original = std::fs::read(path).ok();
+        let mut text = self.doc.to_string();
+        if self.trailing_newline && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        if self.crlf {
+            // TOML normalizes CRLF to LF when parsing, so converting every
+            // newline (including multi-line strings) is semantically safe.
+            text = text.replace("\r\n", "\n").replace('\n', "\r\n");
+        }
+        // Fail closed: never write a document that cannot be parsed again.
+        Self::parse(text.clone())?;
+        let mut data = Vec::with_capacity(text.len() + 3);
+        if self.bom {
+            data.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+        }
+        data.extend_from_slice(text.as_bytes());
+
+        if let Err(error) = agentvault_core::util::atomic_write(path, &data) {
+            restore(path, original.as_deref());
+            return Err(error);
+        }
+        match Self::load(path) {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                restore(path, original.as_deref());
+                Err(Error::Other(format!(
+                    "Codex config failed post-write validation and was restored: {error}"
+                )))
+            }
+        }
+    }
+}
+
+/// Put the exact previous bytes back, or remove a file this write created.
+fn restore(path: &Path, original: Option<&[u8]>) {
+    match original {
+        Some(bytes) => {
+            let _ = agentvault_core::util::atomic_write(path, bytes);
+        }
+        None => {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+fn read_env(server: &dyn TableLike, unsupported: &mut Option<String>) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    let Some(item) = server.get("env") else {
+        return env;
+    };
+    let Some(table) = item.as_table_like() else {
+        *unsupported = Some("env is not a table".into());
+        return env;
+    };
+    for (key, value) in table.iter() {
+        match value.as_str() {
+            Some(value) => {
+                env.insert(key.to_string(), value.to_string());
+            }
+            None => {
+                *unsupported = Some("env contains a non-string value".into());
+            }
+        }
+    }
+    env
+}
+
+fn write_wrapped_command(server: &mut dyn TableLike, launcher: &str, args: &[String]) {
+    server.insert("command", Item::Value(Value::from(launcher)));
+    let mut array = Array::new();
+    for arg in args {
+        array.push(Value::from(arg.as_str()));
+    }
+    server.insert("args", Item::Value(Value::Array(array)));
+}
+
+fn remove_env_keys(server: &mut dyn TableLike, keys: &BTreeSet<String>) {
+    let Some(item) = server.get_mut("env") else {
+        return;
+    };
+    let Some(table) = item.as_table_like_mut() else {
+        return;
+    };
+    for key in keys {
+        table.remove(key);
+    }
+}
+
+fn change_for(server: &CodexServer, policy: &crate::Policy) -> CodexChange {
+    let migrated = secret_env(server, policy);
+    let migrated_keys: BTreeSet<String> = migrated.iter().map(|(key, _)| key.clone()).collect();
+    CodexChange {
+        server: server.name.clone(),
+        before: before_command(server),
+        remaining_env: server
+            .env
+            .keys()
+            .filter(|key| !migrated_keys.contains(*key))
+            .cloned()
+            .collect(),
+        migrated_env: migrated,
+    }
+}
+
+fn before_command(server: &CodexServer) -> String {
+    format!(
+        "{} {}",
+        server.command.clone().unwrap_or_default(),
+        server.args.join(" ")
+    )
+    .trim()
+    .to_string()
 }
 
 fn secret_env(server: &CodexServer, policy: &crate::Policy) -> Vec<(String, String)> {
@@ -483,235 +445,6 @@ fn secret_env(server: &CodexServer, policy: &crate::Policy) -> Vec<(String, Stri
         .filter(|(key, value)| crate::should_migrate_env(key, value, policy))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect()
-}
-
-fn section_body<'a>(line: &'a str, prefix: &str) -> Option<String> {
-    let inner = line.strip_prefix('[')?.strip_suffix(']')?;
-    let rest = inner.strip_prefix(prefix)?.strip_prefix('.')?;
-    Some(rest.trim().to_string())
-}
-
-fn parse_section(rest: &str) -> Option<(String, bool)> {
-    let rest = rest.trim();
-    if rest.is_empty() {
-        return None;
-    }
-
-    // Quoted server name: `"name"`, `'name'`, optionally followed by `.env`.
-    if rest.starts_with('"') || rest.starts_with('\'') {
-        let quote = rest.chars().next()?;
-        let end = find_quote_end(rest, quote)?;
-        let name = unquote(&rest[..=end]);
-        let tail = rest[end + 1..].trim();
-        if tail.is_empty() {
-            return Some((name, false));
-        }
-        if tail == ".env" {
-            return Some((name, true));
-        }
-        // A nested table under a quoted server (e.g. `"a.b".timeout`) is not
-        // a server definition; leave it to the current server's tail.
-        return None;
-    }
-
-    // Bare name: only `NAME` or `NAME.env`. Any other dot is a nested table,
-    // not a server name (TOML bare keys cannot contain dots).
-    if let Some(stripped) = rest.strip_suffix(".env") {
-        if stripped.contains('.') {
-            return None;
-        }
-        return Some((stripped.to_string(), true));
-    }
-    if rest.contains('.') {
-        return None;
-    }
-    Some((rest.to_string(), false))
-}
-
-fn find_quote_end(input: &str, quote: char) -> Option<usize> {
-    let mut escaped = false;
-    let mut iter = input.char_indices();
-    iter.next()?; // skip the opening quote
-    for (idx, ch) in iter {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' {
-            escaped = true;
-            continue;
-        }
-        if ch == quote {
-            return Some(idx);
-        }
-    }
-    None
-}
-
-fn parse_key_value(line: &str) -> Option<(String, String)> {
-    let (key, value) = line.split_once('=')?;
-    let key = key.trim();
-    if key.is_empty() || key.starts_with('#') {
-        return None;
-    }
-    Some((unquote(key), unquote(strip_inline_comment(value).trim())))
-}
-
-fn strip_inline_comment(value: &str) -> &str {
-    let mut quote: Option<char> = None;
-    let mut escaped = false;
-    for (idx, ch) in value.char_indices() {
-        match quote {
-            Some('"') => {
-                if escaped {
-                    escaped = false;
-                } else if ch == '\\' {
-                    escaped = true;
-                } else if ch == '"' {
-                    quote = None;
-                }
-            }
-            Some('\'') => {
-                if ch == '\'' {
-                    quote = None;
-                }
-            }
-            _ => {
-                if ch == '"' || ch == '\'' {
-                    quote = Some(ch);
-                } else if ch == '#' {
-                    return &value[..idx];
-                }
-            }
-        }
-    }
-    value
-}
-
-fn array_is_closed(value: &str) -> bool {
-    let mut depth = 0i32;
-    let mut quote: Option<char> = None;
-    let mut escaped = false;
-    let mut saw_bracket = false;
-    for ch in value.chars() {
-        match quote {
-            Some('"') => {
-                if escaped {
-                    escaped = false;
-                } else if ch == '\\' {
-                    escaped = true;
-                } else if ch == '"' {
-                    quote = None;
-                }
-            }
-            Some('\'') => {
-                if ch == '\'' {
-                    quote = None;
-                }
-            }
-            _ => {
-                if ch == '"' || ch == '\'' {
-                    quote = Some(ch);
-                } else if ch == '[' {
-                    depth += 1;
-                    saw_bracket = true;
-                } else if ch == ']' {
-                    depth -= 1;
-                    saw_bracket = true;
-                }
-            }
-        }
-    }
-    saw_bracket && depth <= 0
-}
-
-fn split_top_level(input: &str, separator: char) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut current = String::new();
-    let mut in_string = false;
-    let mut escaped = false;
-    for ch in input.chars() {
-        match ch {
-            '\\' if in_string => {
-                escaped = !escaped;
-                current.push(ch);
-            }
-            '"' if !escaped => {
-                in_string = !in_string;
-                current.push(ch);
-            }
-            c if c == separator && !in_string => {
-                out.push(current.trim().to_string());
-                current.clear();
-            }
-            _ => {
-                escaped = false;
-                current.push(ch);
-            }
-        }
-    }
-    if !current.trim().is_empty() {
-        out.push(current.trim().to_string());
-    }
-    out
-}
-
-fn parse_array(value: &str) -> Vec<String> {
-    let inner = value
-        .trim()
-        .strip_prefix('[')
-        .and_then(|v| v.strip_suffix(']'))
-        .unwrap_or(value);
-    split_top_level(inner, ',')
-        .into_iter()
-        .filter(|item| !item.is_empty())
-        .map(|item| unquote(&item))
-        .collect()
-}
-
-fn parse_inline_table(value: &str) -> BTreeMap<String, String> {
-    let inner = value
-        .trim()
-        .strip_prefix('{')
-        .and_then(|v| v.strip_suffix('}'))
-        .unwrap_or("");
-    let mut out = BTreeMap::new();
-    for item in split_top_level(inner, ',') {
-        if item.is_empty() {
-            continue;
-        }
-        if let Some((key, value)) = item.split_once('=') {
-            out.insert(unquote(key.trim()), unquote(value.trim()));
-        }
-    }
-    out
-}
-
-fn unquote(value: &str) -> String {
-    let value = value.trim();
-    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
-        serde_json::from_str::<String>(value)
-            .unwrap_or_else(|_| value[1..value.len() - 1].to_string())
-    } else if value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'') {
-        value[1..value.len() - 1].to_string()
-    } else {
-        value.to_string()
-    }
-}
-
-fn toml_quote(value: &str) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| format!("\"{value}\""))
-}
-
-fn toml_key(key: &str) -> String {
-    if key
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    {
-        key.to_string()
-    } else {
-        toml_quote(key)
-    }
 }
 
 #[cfg(test)]
@@ -731,11 +464,19 @@ startup_timeout_sec = 20
 url = "https://example.com/mcp"
 "#;
 
+    fn parse(text: &str) -> CodexConfig {
+        CodexConfig::parse(text.to_string()).unwrap()
+    }
+
     #[test]
     fn parses_servers_and_env() {
-        let cfg = CodexConfig::parse(SAMPLE.to_string());
+        let cfg = parse(SAMPLE);
         assert_eq!(cfg.servers.len(), 2);
-        let pg = cfg.servers.iter().find(|s| s.name == "postgres").unwrap();
+        let pg = cfg
+            .servers
+            .iter()
+            .find(|server| server.name == "postgres")
+            .unwrap();
         assert_eq!(pg.command.as_deref(), Some("npx"));
         assert_eq!(pg.args.len(), 2);
         assert_eq!(
@@ -746,10 +487,10 @@ url = "https://example.com/mcp"
 
     #[test]
     fn rewrites_and_strips_secret_env() {
-        let mut cfg = CodexConfig::parse(SAMPLE.to_string());
+        let mut cfg = parse(SAMPLE);
         let changes = cfg.apply();
         assert_eq!(changes.len(), 1);
-        let text = cfg.lines.join("\n");
+        let text = cfg.render();
         assert!(text.contains("command = \"agentvault\""));
         assert!(text.contains("\"run\""));
         assert!(text.contains("--env"));
@@ -764,14 +505,13 @@ url = "https://example.com/mcp"
 
     #[test]
     fn refresh_updates_wrapped_launcher_and_home() {
-        let mut cfg = CodexConfig::parse(SAMPLE.to_string());
+        let mut cfg = parse(SAMPLE);
         cfg.apply_with_launcher("/old/agentvault", Some(std::path::Path::new("/old/home")));
-        let mut cfg = CodexConfig::parse(cfg.lines.join("\n"));
+        let mut cfg = parse(&cfg.render());
         let changes =
             cfg.refresh_launcher("/new/agentvault", Some(std::path::Path::new("/new/home")));
         assert_eq!(changes.len(), 1);
-        let rendered = cfg.lines.join("\n");
-        let reparsed = CodexConfig::parse(rendered);
+        let reparsed = parse(&cfg.render());
         let server = reparsed
             .servers
             .iter()
@@ -784,12 +524,7 @@ url = "https://example.com/mcp"
         );
         assert!(server.args.contains(&"npx".to_string()));
         assert!(server.env.contains_key("LOG_LEVEL"));
-        assert!(reparsed
-            .servers
-            .iter()
-            .find(|server| server.name == "postgres")
-            .map(|server| CodexConfig::is_wrapped(server))
-            .unwrap_or(false));
+        assert!(CodexConfig::is_wrapped(server));
         assert!(cfg
             .refresh_launcher("/new/agentvault", Some(std::path::Path::new("/new/home")))
             .is_empty());
@@ -797,10 +532,9 @@ url = "https://example.com/mcp"
 
     #[test]
     fn apply_is_idempotent() {
-        let mut cfg = CodexConfig::parse(SAMPLE.to_string());
+        let mut cfg = parse(SAMPLE);
         cfg.apply();
-        let rendered = cfg.lines.join("\n");
-        let mut reparsed = CodexConfig::parse(rendered);
+        let mut reparsed = parse(&cfg.render());
         assert!(reparsed.apply().is_empty());
     }
 
@@ -814,10 +548,10 @@ command = "db-mcp"
 DB_PASSWORD = "hunter2"
 LOG_LEVEL = "debug"
 "#;
-        let mut cfg = CodexConfig::parse(text.to_string());
+        let mut cfg = parse(text);
         let changes = cfg.apply();
         assert_eq!(changes.len(), 1);
-        let rendered = cfg.lines.join("\n");
+        let rendered = cfg.render();
         assert!(!rendered.contains("DB_PASSWORD ="));
         assert!(rendered.contains("LOG_LEVEL"));
     }
@@ -834,21 +568,89 @@ args = [
 env = { DATABASE_URL = "postgres://u:p@h/db", LOG_LEVEL = "info" }
 startup_timeout_sec = 20
 "#;
-        let cfg = CodexConfig::parse(text.to_string());
-        let server = &cfg.servers[0];
-        assert_eq!(server.args.len(), 2);
-        assert_eq!(server.args[1], "@modelcontextprotocol/server-postgres");
-        let mut cfg = cfg;
+        let mut cfg = parse(text);
+        assert_eq!(cfg.servers[0].args.len(), 2);
         cfg.apply_with_launcher("agentvault.exe", Some(std::path::Path::new(r"C:\av home")));
-        let rendered = cfg.lines.join("\n");
+        let rendered = cfg.render();
         assert!(rendered.contains("--home"));
         assert!(rendered.contains("run"));
         assert!(!rendered.contains("@modelcontextprotocol/server-postgres\",\n]"));
         assert!(!rendered.contains("  \"-y\","));
         assert!(rendered.contains("startup_timeout_sec = 20"));
-        let mut reparsed = CodexConfig::parse(rendered);
+        let mut reparsed = parse(&rendered);
         assert!(CodexConfig::is_wrapped(&reparsed.servers[0]));
         assert!(reparsed.apply().is_empty());
+    }
+
+    #[test]
+    fn parses_single_quoted_args_with_commas() {
+        let text = r#"
+[mcp_servers.probe]
+command = 'node'
+args = ['-e', 'setTimeout(()=>{},60000)']
+"#;
+        let cfg = parse(text);
+        assert_eq!(cfg.servers[0].args.len(), 2);
+        assert_eq!(cfg.servers[0].args[0], "-e");
+        assert_eq!(cfg.servers[0].args[1], "setTimeout(()=>{},60000)");
+    }
+
+    #[test]
+    fn handles_crlf_and_bom() {
+        let text = "\u{feff}[mcp_servers.db]\r\ncommand = 'node'\r\nargs = ['-e', 'a,b']\r\n\r\n[mcp_servers.db.env]\r\nAPI_KEY = 'sk-test-crlf'\r\nKEEP = 'yes'\r\n";
+        let mut cfg = parse(text);
+        assert_eq!(cfg.servers[0].args[1], "a,b");
+        cfg.apply();
+        let rendered = cfg.render();
+        assert!(!rendered.contains("sk-test-crlf"));
+        assert!(rendered.contains("KEEP"));
+    }
+
+    #[test]
+    fn handles_dotted_keys_and_quoted_names() {
+        let text = r#"
+mcp_servers.db.command = "node"
+mcp_servers.db.args = ["server.js"]
+mcp_servers.db.env.API_KEY = "sk-test-dotted"
+mcp_servers.db.env.KEEP = "yes"
+
+[mcp_servers."a.b"]
+command = "node"
+args = ["other.js"]
+"#;
+        let mut cfg = parse(text);
+        assert_eq!(cfg.servers.len(), 2);
+        let changes = cfg.apply_with_launcher("C:\\Tools\\agentvault.exe", None);
+        assert_eq!(changes.len(), 2);
+        let rendered = cfg.render();
+        assert!(!rendered.contains("sk-test-dotted"));
+        assert!(rendered.contains("KEEP"));
+        assert!(rendered.contains("a.b"));
+        assert!(cfg.servers.iter().all(CodexConfig::is_wrapped));
+    }
+
+    #[test]
+    fn preserves_comments_unknown_fields_and_inline_env() {
+        let text = r#"
+# top comment: keep me
+model = "gpt-5"
+
+[mcp_servers.db]
+# command comment
+command = "node"
+args = ["server.js"] # args comment
+startup_timeout_sec = 20
+custom = "keep-me"
+env = { TOKEN = "sk-test-comment", LOG_LEVEL = "info" }
+"#;
+        let mut cfg = parse(text);
+        cfg.apply();
+        let rendered = cfg.render();
+        assert!(rendered.contains("# top comment: keep me"));
+        assert!(rendered.contains("startup_timeout_sec = 20"));
+        assert!(rendered.contains("custom = \"keep-me\""));
+        assert!(rendered.contains("LOG_LEVEL"));
+        assert!(!rendered.contains("sk-test-comment"));
     }
 
     #[test]
@@ -861,18 +663,17 @@ command = "db-mcp"
 command = "evil"
 value = 5
 "#;
-        let cfg = CodexConfig::parse(text.to_string());
+        let mut cfg = parse(text);
         assert_eq!(cfg.servers.len(), 1);
         assert_eq!(cfg.servers[0].command.as_deref(), Some("db-mcp"));
-        let mut cfg = cfg;
         cfg.apply();
-        let rendered = cfg.lines.join("\n");
+        let rendered = cfg.render();
         assert!(rendered.contains("[mcp_servers.db.timeout]"));
         assert!(rendered.contains("command = \"evil\""));
     }
 
     #[test]
-    fn keeps_inline_env_when_env_subtable_exists() {
+    fn rejects_inline_env_plus_subtable() {
         let text = r#"
 [mcp_servers.db]
 command = "db-mcp"
@@ -881,11 +682,90 @@ env = { DB_PASSWORD = "hunter2", LOG_LEVEL = "info" }
 [mcp_servers.db.env]
 EXTRA_FLAG = "1"
 "#;
-        let mut cfg = CodexConfig::parse(text.to_string());
-        cfg.apply();
-        let rendered = cfg.lines.join("\n");
-        assert!(!rendered.contains("DB_PASSWORD ="));
-        assert!(rendered.contains("LOG_LEVEL"));
-        assert!(rendered.contains("EXTRA_FLAG"));
+        assert!(CodexConfig::parse(text.to_string()).is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_toml() {
+        assert!(CodexConfig::parse("[mcp_servers.db\ncommand = \"x\"\n".to_string()).is_err());
+    }
+
+    #[test]
+    fn refresh_preserves_non_home_prefix_flags() {
+        let text = r#"
+[mcp_servers.db]
+command = "C:\\old\\agentvault.exe"
+args = ["--no-autostart", "--home", "C:\\old", "run", "--name", "db", "--", "node", "server.js"]
+"#;
+        let mut cfg = parse(text);
+        let changes = cfg.refresh_launcher(
+            "C:\\new\\agentvault.exe",
+            Some(std::path::Path::new("C:\\new")),
+        );
+        assert_eq!(changes.len(), 1);
+        let rendered = cfg.render();
+        assert!(rendered.contains("--no-autostart"));
+        assert!(!rendered.contains("C:\\old"));
+        assert!(rendered.contains("C:\\new"));
+        assert!(rendered.contains("server.js"));
+    }
+
+    #[test]
+    fn reports_unsupported_args_without_wrapping() {
+        let text = r#"
+[mcp_servers.db]
+command = "node"
+args = ["server.js", 42]
+env = { API_KEY = "sk-test-unsupported" }
+"#;
+        let cfg = parse(text);
+        assert!(cfg.servers[0].unsupported.is_some());
+        assert!(cfg.plan().is_empty());
+        assert!(!cfg.render().contains("agentvault"));
+    }
+
+    #[test]
+    fn decodes_escaped_and_literal_strings() {
+        let text = r#"
+[mcp_servers.probe]
+command = "node"
+args = ["-e", "console.log(\"hi\")", 'C:\tmp\dir', "line1\nline2", "tab\tend", "quote'inside"]
+env = { API_KEY = "sk-test-escaped", PATH_HINT = 'C:\tools\bin', QUOTED = "a\"b", MULTILINE = """first
+second""" }
+"#;
+        let mut cfg = parse(text);
+        let server = &cfg.servers[0];
+        assert_eq!(server.args[1], "console.log(\"hi\")");
+        assert_eq!(server.args[2], r"C:\tmp\dir");
+        assert_eq!(server.args[3], "line1\nline2");
+        assert_eq!(server.args[4], "tab\tend");
+        assert_eq!(server.args[5], "quote'inside");
+        assert_eq!(
+            server.env.get("PATH_HINT").map(String::as_str),
+            Some(r"C:\tools\bin")
+        );
+        assert_eq!(
+            server.env.get("MULTILINE").map(String::as_str),
+            Some("first\nsecond")
+        );
+        assert_eq!(server.env.get("QUOTED").map(String::as_str), Some("a\"b"));
+
+        let changes = cfg.apply();
+        assert_eq!(changes.len(), 1);
+        let rendered = cfg.render();
+        assert!(!rendered.contains("sk-test-escaped"), "{rendered}");
+        assert!(rendered.contains("PATH_HINT"), "{rendered}");
+        assert!(
+            rendered.contains("LOG_LEVEL") || !rendered.contains("API_KEY ="),
+            "{rendered}"
+        );
+
+        // Round-trip: escaped/literal values must survive the rewrite.
+        let reparsed = parse(&rendered);
+        let wrapped = &reparsed.servers[0];
+        assert!(CodexConfig::is_wrapped(wrapped));
+        assert!(wrapped.args.iter().any(|arg| arg == r"C:\tmp\dir"));
+        assert!(wrapped.args.iter().any(|arg| arg == "line1\nline2"));
+        assert!(wrapped.args.iter().any(|arg| arg == "quote'inside"));
     }
 }

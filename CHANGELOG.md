@@ -1,5 +1,56 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Web console is part of the workspace: `agentvault web --port 8787`, React
+  build embedded in the binary, token written to `web.token`, SSE authenticated
+  with an Authorization header, CORS removed.
+- Local accounts and sessions: Argon2id password hashes, SHA-256 session
+  storage, owner/admin/viewer roles, tenant labels, 12-hour sessions, and a
+  server-side read-only guard for viewers.
+- Web API: `POST /api/tickets`, `/api/agents/candidates`,
+  `/api/agents/plan`; the frontend can issue tickets and preview an agent
+  rewrite before applying it.
+- One-time desktop handoff: the desktop shell may pass its loopback token as a
+  `?token=` query; the webapp stores it, then strips it from the address bar.
+- Encrypted config backups (`AVBAK1` + ChaCha20-Poly1305, key in the OS
+  keystore) with `backup create/restore/list`.
+- Ed25519 signatures over the append-only audit hash chain:
+  `audit --verify-signature`, `audit --pubkey`.
+- Codex `config.toml` rewrite now uses `toml_edit` with full round-trip
+  preservation (quotes, escapes, multiline arrays, inline tables, dotted keys,
+  comments, CRLF, BOM, unknown fields) and rejects invalid TOML before writing.
+- `audit --verify/--export/--event/--since`; JSONL audit lines carry a
+  `prev_hash`/`hash` chain.
+- `init --cleanup-backups`; `secret add` prompts with masked input
+  (`rpassword`); `--value` warns about shell history and process lists.
+- CI and release build the web frontend before the Rust workspace.
+- Test coverage: 54 Rust tests passing plus one explicitly ignored ConPTY
+  integration test, and two Playwright console tests.
+
+### Changed
+
+- `init` now writes an encrypted backup before rewriting, then re-parses; a
+  failed verification restores the backup instead of leaving a partial file.
+- Backup listing still reports legacy plaintext `*.bak.*` files so they can be
+  cleaned up.
+
+### Fixed
+
+- Windows DPAPI no longer passes plaintext through the PowerShell command line;
+  it uses a short-lived private temp file.
+- `atomic_write` uses a unique temp file per write and retries the Windows
+  rename, fixing concurrent JSON writes.
+- Codex TOML single-quoted args containing commas are no longer split
+  incorrectly; unsupported non-string args/env fail closed.
+- Parallel CLI e2e tests no longer race the broker startup lock.
+
+### Removed
+
+- TUI experiment (`crates/tui`, `tui-prototype`).
+
 ## 0.1.0 — 2026-11-21
 
 First CLI-only release.

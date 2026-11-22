@@ -3,10 +3,20 @@
 *.log
 .agentvault/
 
-# The web console is intentionally deferred; keep local work out of the CLI release.
+# Desktop shell is still local-only; do not publish it with the CLI/web release.
+/desktop/
+# Legacy static prototype; the shipped UI lives in webapp/.
 /web/
-/webapp/
-/crates/web/
+
+# Frontend build output and test artifacts.
+/webapp/node_modules/
+/webapp/dist/
+/webapp/test-results/
+/webapp/playwright-report/
+
+# Local planning/verification scratch.
+/.codeartsdoer/
+/verify.ps1
 
 # Local demo/test scratch.
 /.demo/

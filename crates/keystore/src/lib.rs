@@ -10,7 +10,7 @@
 pub mod file_backend;
 pub mod platform;
 
-use agentvault_core::util::{atomic_write, random_bytes};
+use agentvault_core::util::{atomic_write, random_bytes, random_hex};
 use agentvault_core::{Error, Result};
 use hkdf::Hkdf;
 use sha2::Sha256;
@@ -80,6 +80,17 @@ impl Keystore {
                 file_backend::delete_secret(&self.dir, &master, name)
             }
         }
+    }
+
+    /// Read a stored hex secret, generating `bytes` random bytes on first use.
+    /// Used for keys that do not exist yet on a fresh install.
+    pub fn get_or_create_secret(&self, name: &str, bytes: usize) -> Result<String> {
+        if let Some(value) = self.get(name)? {
+            return Ok(value);
+        }
+        let value = random_hex(bytes);
+        self.set(name, &value)?;
+        Ok(value)
     }
 
     /// Load many secrets at once. On Windows this runs a single PowerShell

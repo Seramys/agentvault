@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "memory": {
+      "command": "node",
+      "args": ["dist/index.js", "--stdio"],
+      "env": { "MEMORY_API_KEY": "sk-corpus-cline-memory", "MAX_TOKENS": "8192" },
+      "disabled": false,
+      "autoApprove": ["read", "search"],
+      "timeout": 60
+    },
+    "browser": {
+      "command": "python",
+      "args": ["-m", "browser_mcp"],
+      "env": { "PATH_REF": "${env:PYTHONPATH}" },
+      "disabled": true
+    }
+  }
+}

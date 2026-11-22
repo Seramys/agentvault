@@ -8,3 +8,4 @@ license.workspace = true
 agentvault-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml_edit.workspace = true

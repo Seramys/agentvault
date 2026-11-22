@@ -6,7 +6,7 @@ use agentvault_core::store;
 use agentvault_core::{Result, Root, RootSource};
 use clap::{Parser, Subcommand};
 use serde_json::{json, Value};
-use std::io::Write;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -62,6 +62,9 @@ enum Cmd {
         /// Do not add AGENTVAULT_HOME / the binary directory to the user env.
         #[arg(long)]
         no_env: bool,
+        /// Remove encrypted backups (and legacy plaintext .bak.* files) after a rewrite.
+        #[arg(long = "cleanup-backups")]
+        cleanup_backups: bool,
     },
     /// Run the local broker (in the foreground by default).
     Daemon {
@@ -176,6 +179,24 @@ enum Cmd {
         tail: usize,
         #[arg(long)]
         json: bool,
+        /// Only events whose name contains this value.
+        #[arg(long)]
+        event: Option<String>,
+        /// Start time: 2h / 30m / epoch milliseconds.
+        #[arg(long)]
+        since: Option<String>,
+        /// Export the raw JSONL trail to this file.
+        #[arg(long, value_name = "FILE")]
+        export: Option<PathBuf>,
+        /// Verify the hash chain and report the first broken line.
+        #[arg(long)]
+        verify: bool,
+        /// Verify the Ed25519 signature on every line.
+        #[arg(long = "verify-signature")]
+        verify_signature: bool,
+        /// Print the audit signing public key (hex) and exit.
+        #[arg(long = "pubkey")]
+        pubkey: bool,
     },
     /// Manage honeypot canaries (layer 4).
     Honeypot {
@@ -186,6 +207,19 @@ enum Cmd {
     Env {
         #[command(subcommand)]
         cmd: EnvCmd,
+    },
+    /// Create, restore or list encrypted config backups.
+    Backup {
+        #[command(subcommand)]
+        cmd: BackupCmd,
+    },
+
+    /// Serve the local web console.
+    Web {
+        #[arg(long, default_value_t = 8787)]
+        port: u16,
+        #[arg(long, value_name = "DIR")]
+        dist: Option<PathBuf>,
     },
     /// Diagnose state dir, broker, keystore and detected agent configs.
     Doctor,
@@ -210,6 +244,30 @@ enum EnvCmd {
         scope: String,
         #[arg(long)]
         dry_run: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum BackupCmd {
+    /// Encrypt a config to `<config>.bak.<ms>.enc`.
+    Create {
+        /// Config path; defaults to the agentvault config.
+        #[arg(long, value_name = "FILE")]
+        path: Option<PathBuf>,
+    },
+    /// Decrypt a backup over its target and re-parse it.
+    Restore {
+        #[arg(long, value_name = "FILE")]
+        backup: PathBuf,
+        /// Target path; defaults to the agentvault config.
+        #[arg(long, value_name = "FILE")]
+        path: Option<PathBuf>,
+    },
+    /// List encrypted and legacy backups for a config.
+    List {
+        /// Config path; defaults to the agentvault config.
+        #[arg(long, value_name = "FILE")]
+        path: Option<PathBuf>,
     },
 }
 
@@ -294,6 +352,7 @@ fn run(cli: Cli) -> Result<()> {
             migrate_env,
             keep_env,
             no_env,
+            cleanup_backups,
         } => cmd_init(
             &root,
             &agent,
@@ -305,6 +364,7 @@ fn run(cli: Cli) -> Result<()> {
             &migrate_env,
             &keep_env,
             no_env,
+            cleanup_backups,
         ),
         Cmd::Daemon { detach, .. } => cmd_daemon(&root, detach),
         Cmd::Stop => {
@@ -497,26 +557,97 @@ fn run(cli: Cli) -> Result<()> {
                 Ok(())
             }
         }
-        Cmd::Audit { tail, json } => {
-            client::ensure_running(&root)?;
-            let data = client::request(&root, "audit_tail", json!({ "limit": tail }))?;
-            if json {
-                print_json(&data)
-            } else {
-                let events = data.as_array().cloned().unwrap_or_default();
-                for event in events {
-                    println!(
-                        "[{}] {:<18} actor={:<14} secret={:<18} ticket={:<38} {}",
-                        event.get("ts").and_then(Value::as_i64).unwrap_or(0),
-                        event.get("event").and_then(Value::as_str).unwrap_or("-"),
-                        event.get("actor").and_then(Value::as_str).unwrap_or("-"),
-                        event.get("secret").and_then(Value::as_str).unwrap_or("-"),
-                        event.get("ticket").and_then(Value::as_str).unwrap_or("-"),
-                        event.get("result").and_then(Value::as_str).unwrap_or("-"),
-                    );
-                }
-                Ok(())
+        Cmd::Audit {
+            tail,
+            json,
+            event,
+            since,
+            export,
+            verify,
+            verify_signature,
+            pubkey,
+        } => {
+            if pubkey {
+                println!("{}", agentvault_audit::public_key_hex(&root)?);
+                return Ok(());
             }
+            if verify_signature {
+                let report = agentvault_audit::verify_signatures(&root)?;
+                if json {
+                    return print_json(&json!({
+                        "checked": report.checked,
+                        "legacy": report.legacy,
+                        "unsigned": report.unsigned,
+                        "broken": report.broken,
+                    }));
+                }
+                println!(
+                    "audit signatures: checked={} legacy={} unsigned={} broken={}",
+                    report.checked,
+                    report.legacy,
+                    report.unsigned,
+                    report.broken.len()
+                );
+                for item in &report.broken {
+                    println!("  ! {item}");
+                }
+                if !report.broken.is_empty() {
+                    return Err(agentvault_core::Error::Other(
+                        "audit signatures are broken".into(),
+                    ));
+                }
+                return Ok(());
+            }
+            if verify {
+                let report = agentvault_audit::verify(&root)?;
+                if json {
+                    return print_json(&json!({
+                        "checked": report.checked,
+                        "legacy": report.legacy,
+                        "broken": report.broken,
+                    }));
+                }
+                println!(
+                    "audit chain: checked={} legacy={} broken={}",
+                    report.checked,
+                    report.legacy,
+                    report.broken.len()
+                );
+                for item in &report.broken {
+                    println!("  ! {item}");
+                }
+                if !report.broken.is_empty() {
+                    return Err(agentvault_core::Error::Other(
+                        "audit chain is broken".into(),
+                    ));
+                }
+                return Ok(());
+            }
+            if let Some(path) = export {
+                let count = agentvault_audit::export(&root, &path)?;
+                println!("exported {count} event(s) to {}", path.display());
+                return Ok(());
+            }
+            let since_ms = match since.as_deref() {
+                Some(value) => Some(parse_since(value)?),
+                None => None,
+            };
+            let events = agentvault_audit::read_filtered(&root, event.as_deref(), since_ms, tail)?;
+            if json {
+                return print_json(&serde_json::to_value(&events)?);
+            }
+            for event in events {
+                println!(
+                    "[{}] {:<18} actor={:<14} secret={:<18} ticket={:<38} {}",
+                    event.ts,
+                    event.event,
+                    event.actor,
+                    event.secret.as_deref().unwrap_or("-"),
+                    event.ticket.as_deref().unwrap_or("-"),
+                    event.result,
+                );
+            }
+            Ok(())
         }
         Cmd::Honeypot { cmd } => cmd_honeypot(&root, cmd),
         Cmd::Env { cmd } => match cmd {
@@ -528,10 +659,16 @@ fn run(cli: Cli) -> Result<()> {
             } => envcmd::install(&root, &scope, !no_path, dry_run),
             EnvCmd::Uninstall { scope, dry_run } => envcmd::uninstall(&scope, dry_run),
         },
+        Cmd::Backup { cmd } => cmd_backup(&root, cmd),
+
+        Cmd::Web { port, dist } => agentvault_web::serve(root.clone(), port, dist),
         Cmd::Doctor => cmd_doctor(&root),
     }
 }
 
+// The init workflow exposes each policy switch as a CLI flag; keeping them as
+// explicit parameters matches the command surface and avoids a one-off struct.
+#[allow(clippy::too_many_arguments)]
 fn cmd_init(
     root: &Root,
     agent: &str,
@@ -543,6 +680,7 @@ fn cmd_init(
     migrate_env: &[String],
     keep_env: &[String],
     no_env: bool,
+    cleanup_backups: bool,
 ) -> Result<()> {
     let explicit = if agent.eq_ignore_ascii_case("auto") {
         None
@@ -632,7 +770,11 @@ fn cmd_init(
     }
 
     if toml {
-        return cmd_init_codex(root, kind, &target, dry_run, refresh, &policy);
+        cmd_init_codex(root, kind, &target, dry_run, refresh, &policy)?;
+        if cleanup_backups && !dry_run {
+            cleanup_note(&target)?;
+        }
+        return Ok(());
     }
 
     let mut mcp = agentvault_adapters::load_any(&target)?;
@@ -664,7 +806,7 @@ fn cmd_init(
         }
 
         client::ensure_running(root)?;
-        let backup = agentvault_adapters::backup_file(&target)?;
+        let backup = agentvault_backup::create(&target, root)?;
         let changes = agentvault_adapters::refresh_with_launcher_and(
             &mut mcp,
             &launcher,
@@ -673,11 +815,15 @@ fn cmd_init(
         mcp.save(&target)?;
         let names: Vec<String> = changes.iter().map(|change| change.server.clone()).collect();
         if let Err(error) = agentvault_adapters::verify_wrapped(&target, &names) {
-            let _ = agentvault_adapters::restore_file(&backup, &target);
+            let _ = agentvault_backup::restore(&backup, &target, root);
             return Err(error);
         }
         println!("wrote:        {}", target.display());
         println!("backup:       {}", backup.display());
+        println!("note:         backup is encrypted with the keystore key backup/master");
+        if cleanup_backups {
+            cleanup_note(&target)?;
+        }
         println!("refreshed {} wrapped server(s)", changes.len());
         return Ok(());
     }
@@ -720,7 +866,7 @@ fn cmd_init(
     }
 
     client::ensure_running(root)?;
-    let backup = agentvault_adapters::backup_file(&target)?;
+    let backup = agentvault_backup::create(&target, root)?;
 
     // Move secret-looking env values into the keystore before stripping them.
     // Only servers that will actually be rewritten: URL-only and already
@@ -770,11 +916,15 @@ fn cmd_init(
 
     let server_names: Vec<String> = changes.iter().map(|change| change.server.clone()).collect();
     if let Err(error) = agentvault_adapters::verify_wrapped(&target, &server_names) {
-        let _ = agentvault_adapters::restore_file(&backup, &target);
+        let _ = agentvault_backup::restore(&backup, &target, root);
         return Err(error);
     }
     println!("wrote:        {}", target.display());
     println!("backup:       {}", backup.display());
+    println!("note:         backup is encrypted with the keystore key backup/master");
+    if cleanup_backups {
+        cleanup_note(&target)?;
+    }
 
     let path_str = target.display().to_string();
     broker.call(
@@ -809,6 +959,64 @@ fn launcher_path() -> String {
         .unwrap_or_else(|| "agentvault".to_string())
 }
 
+fn parse_since(value: &str) -> Result<i64> {
+    if let Ok(stamp) = value.parse::<i64>() {
+        if stamp > 1_000_000_000_000 {
+            return Ok(stamp);
+        }
+    }
+    if let Ok(seconds) = agentvault_core::parse_duration(value) {
+        return Ok(agentvault_core::util::now_ms() - (seconds as i64) * 1000);
+    }
+    Err(agentvault_core::Error::Other(format!(
+        "bad --since `{value}`; use 2h/30m or epoch milliseconds"
+    )))
+}
+
+fn cleanup_note(target: &std::path::Path) -> Result<()> {
+    let removed = agentvault_backup::cleanup(target)?;
+    if removed == 0 {
+        println!("backups:     none to clean");
+    } else {
+        println!("cleaned:     {removed} backup(s)");
+    }
+    Ok(())
+}
+
+fn cmd_backup(root: &Root, cmd: BackupCmd) -> Result<()> {
+    let config = |path: Option<PathBuf>| {
+        path.map(|path| agentvault_core::expand_path(&path.to_string_lossy()))
+            .unwrap_or_else(|| root.config())
+    };
+    match cmd {
+        BackupCmd::Create { path } => {
+            let target = config(path);
+            let backup = agentvault_backup::create(&target, root)?;
+            println!("backup:       {}", backup.display());
+            println!("encryption:   chacha20-poly1305 (keystore key backup/master)");
+            Ok(())
+        }
+        BackupCmd::Restore { backup, path } => {
+            let target = config(path);
+            agentvault_backup::restore(&backup, &target, root)?;
+            println!("restored:     {}", target.display());
+            println!("from:         {}", backup.display());
+            Ok(())
+        }
+        BackupCmd::List { path } => {
+            let target = config(path);
+            let backups = agentvault_backup::list(&target)?;
+            if backups.is_empty() {
+                println!("backups:      none");
+            }
+            for backup in backups {
+                println!("{}", backup.display());
+            }
+            Ok(())
+        }
+    }
+}
+
 fn cmd_init_codex(
     root: &Root,
     kind: AgentKind,
@@ -839,7 +1047,7 @@ fn cmd_init_codex(
         }
 
         client::ensure_running(root)?;
-        let backup = agentvault_adapters::backup_file(target)?;
+        let backup = agentvault_backup::create(target, root)?;
         let changes = codex.refresh_launcher(&launcher, Some(root.dir.as_path()));
         codex.save(target)?;
         let reloaded = agentvault_adapters::codex::CodexConfig::load(target)?;
@@ -855,7 +1063,7 @@ fn cmd_init_codex(
                 .unwrap_or(true)
         });
         if failed {
-            let _ = agentvault_adapters::restore_file(&backup, target);
+            let _ = agentvault_backup::restore(&backup, target, root);
             return Err(agentvault_core::Error::Other(
                 "Codex config did not contain refreshed wrapped servers".into(),
             ));
@@ -873,7 +1081,9 @@ fn cmd_init_codex(
         .servers
         .iter()
         .filter_map(|server| {
-            if server.command.is_none() {
+            if let Some(reason) = &server.unsupported {
+                Some(format!("{} ({reason})", server.name))
+            } else if server.command.is_none() {
                 Some(format!("{} (url-based, no command)", server.name))
             } else if agentvault_adapters::codex::CodexConfig::is_wrapped(server) {
                 Some(format!("{} (already wrapped)", server.name))
@@ -924,7 +1134,7 @@ fn cmd_init_codex(
     }
 
     client::ensure_running(root)?;
-    let backup = agentvault_adapters::backup_file(target)?;
+    let backup = agentvault_backup::create(target, root)?;
     let mut broker = client::BrokerClient::connect(root)?;
     for change in &plan {
         for (key, value) in &change.migrated_env {
@@ -960,7 +1170,7 @@ fn cmd_init_codex(
             .unwrap_or(true)
     });
     if failed {
-        let _ = agentvault_adapters::restore_file(&backup, target);
+        let _ = agentvault_backup::restore(&backup, target, root);
         return Err(agentvault_core::Error::Other(
             "Codex config did not contain wrapped servers after rewrite".into(),
         ));
@@ -1288,18 +1498,26 @@ fn cmd_secret(root: &Root, cmd: SecretCmd) -> Result<()> {
                         "use either --value or --stdin, not both".into(),
                     ))
                 }
-                (Some(value), false) => value,
+                (Some(value), false) => {
+                    eprintln!(
+                        "warning: --value can appear in shell history and process lists; prefer --stdin or interactive input"
+                    );
+                    value
+                }
                 (None, true) => {
                     let mut value = String::new();
                     std::io::Read::read_to_string(&mut std::io::stdin(), &mut value)?;
                     value.trim_end_matches(['\r', '\n']).to_string()
                 }
                 (None, false) => {
-                    print!("value for {name}: ");
-                    std::io::stdout().flush()?;
-                    let mut line = String::new();
-                    std::io::stdin().read_line(&mut line)?;
-                    line.trim_end().to_string()
+                    if std::io::stdin().is_terminal() || std::io::stdout().is_terminal() {
+                        rpassword::prompt_password(format!("value for {name}: "))?
+                    } else {
+                        eprintln!("reading secret value from stdin (no TTY)");
+                        let mut line = String::new();
+                        std::io::stdin().read_line(&mut line)?;
+                        line.trim_end().to_string()
+                    }
                 }
             };
             if value.is_empty() {
@@ -1355,6 +1573,8 @@ fn cmd_secret(root: &Root, cmd: SecretCmd) -> Result<()> {
     }
 }
 
+// Mirrors the `run` flags one-to-one; a struct would only move the noise.
+#[allow(clippy::too_many_arguments)]
 fn cmd_run(
     root: &Root,
     name: &str,

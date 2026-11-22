@@ -1,0 +1,25 @@
+# Codex 0.44-era config: timeouts, `enabled`, multi-line args and env sub-table.
+model = "gpt-5-codex"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[mcp_servers.postgres]
+command = "npx"
+args = [
+  "-y",
+  "@modelcontextprotocol/server-postgres",
+  "postgres://demo:demo@localhost/demo",
+]
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+enabled = true
+
+[mcp_servers.postgres.env]
+DATABASE_URL = "postgres://demo:demo@localhost/demo"
+PGSSLMODE = "disable"
+LOG_LEVEL = "info"
+
+[mcp_servers.memory]
+command = "node"
+args = ["dist/memory-server.js"]
+enabled = false

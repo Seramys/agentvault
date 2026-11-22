@@ -13,7 +13,7 @@
   <a href="https://github.com/Seramys/agentvault/actions/workflows/ci.yml"><img src="https://github.com/Seramys/agentvault/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-6D5BD0.svg" alt="License"></a>
   <img src="https://img.shields.io/badge/rust-stable-CE422B.svg" alt="Rust stable">
-  <img src="https://img.shields.io/badge/status-v0.1-0F9F6E.svg" alt="v0.1">
+  <img src="https://img.shields.io/badge/status-v0.1%20%C2%B7%20web-0F9F6E.svg" alt="v0.1 · web">
 </p>
 
 <p align="center">
@@ -23,15 +23,16 @@
 <p align="center">
   <a href="#30-秒で理解">30 秒</a> ·
   <a href="#クイックスタート">クイックスタート</a> ·
+  <a href="#web-コンソール">Web コンソール</a> ·
   <a href="#図解ステップガイド">ガイド</a> ·
   <a href="#コマンド一覧">コマンド</a> ·
   <a href="#セキュリティモデル">セキュリティ</a> ·
   <a href="#実テストの証拠">証拠</a>
 </p>
 
-> **v0.1 の範囲**：レイヤー 0（シークレット保管）、1（短期チケット + ローカル broker）、4（監査 + ハニーポット）を実装済みです。サンドボックス（L2）と egress 制御/DLP（L3）は明示的に対象外です。Web コンソールは延期し、このリポジトリは CLI のみを公開します。
+> **現在の範囲**：レイヤー 0（シークレット保管）、1（短期チケット + ローカル broker）、4（監査 + ハニーポット）、およびローカル Web コンソール（アカウント/ロール、テナントラベル、SSE、署名付き監査、暗号化バックアップ）を実装済みです。サンドボックス（L2）と egress 制御/DLP（L3）は今後です。
 >
-> **ひとことで**：「この token を `mcp.json` に書くべきか」を悩まない。Vault に保管し、エージェントにはチケットと交換させる。
+> **ひとことで**：「この token を `mcp.json` に書くべきか」を悩まない。Vault に保管し、エージェントにはチケットと交換させる。全体像を見たいときはローカルコンソールを開く。
 
 ---
 
@@ -47,6 +48,8 @@
 - [5 つのレイヤー](#5-つのレイヤー)
 - [インストール](#インストール)
 - [クイックスタート](#クイックスタート)
+- [Web コンソール](#web-コンソール)
+- [暗号化バックアップ、署名付き監査、TOML ラウンドトリップ](#暗号化バックアップ署名付き監査toml-ラウンドトリップ)
 - [図解ステップガイド](#図解ステップガイド)
   - [ステップ 0：全体像](#ステップ-0全体像)
   - [ステップ 1：インストールと確認](#ステップ-1インストールと確認)
@@ -203,11 +206,15 @@ L0 + L1 で「設定に平文を置かない」「権限に時間の境界があ
 
 ### 方法 A：ソースからビルド（現時点の推奨）
 
-stable Rust（edition 2021）が必要です。Windows / macOS / Linux で動作します。
+stable Rust（edition 2021）が必要です。Windows / macOS / Linux で動作します。Web コンソールを含める場合は Node.js 20+ で一度フロントエンドをビルドします（CLI のみなら不要）。
 
 ```bash
 git clone https://github.com/Seramys/agentvault.git
 cd agentvault
+
+# Web コンソール込み：コンパイル時に埋め込み
+cd webapp && npm ci && npm run build && cd ..
+
 cargo build --release
 ```
 
@@ -234,7 +241,7 @@ agentvault --version
 
 ### 方法 C：GitHub Releases
 
-リリース公開後は各プラットフォームのバイナリを取得できます。v0.1 では、このドキュメントと一致するバイナリを得るためソースビルドを主経路とします。
+Releases ページには v0.1.0 の CLI バイナリがあります。Web コンソール、暗号化バックアップ、署名付き監査などの新機能は、次のリリースまでソースからビルドしてください。
 
 ---
 
@@ -298,6 +305,117 @@ agentvault --home "$HOME/.agentvault-demo" revoke --all
 ```
 
 `revoke --all` はグローバル epoch を進めます。古いチケットは即座にすべて無効になり、以後に発行されたチケットは新しい epoch を使います。
+
+UI から始める場合：
+
+```bash
+agentvault web --port 8787
+# http://127.0.0.1:8787 を開く
+# 最初のログインは AGENTVAULT_HOME/web.token
+```
+
+---
+
+## Web コンソール
+
+<p align="center">
+  <img src="docs/assets/web/console-hero.png" alt="AgentVault local web console" width="100%">
+</p>
+
+CLI は設定から平文を排除します。Web コンソールは「いま何が起きているか」を 10 秒で把握するためのローカル表示層です。別のサーバー製品ではありません。`agentvault web` は単一バイナリのままで、React ビルドをコンパイル時に埋め込み、同じ `AGENTVAULT_HOME`、同じ broker、同じ監査を読みます。
+
+```bash
+# 既定は 127.0.0.1:8787。URL と web.token のパスを表示
+agentvault web
+
+# ポート変更
+agentvault web --port 8790
+```
+
+### ログイン
+
+| 方法 | 向いている用途 | 資格情報の場所 |
+|---|---|---|
+| **ローカルセッション** | 単一マシンの初回、緊急管理 | `AGENTVAULT_HOME/web.token`（所有者限定ファイル） |
+| **ローカルアカウント** | 1 台を複数人で利用、owner/admin/viewer を分離 | `web-accounts.json` に **Argon2id**、セッションは SHA-256 で保存 |
+
+<p align="center">
+  <img src="docs/assets/web/login.png" alt="Login" width="88%">
+</p>
+
+最初は `web.token` で owner として入り、「設定 → アカウントとテナント」で長期アカウントを作ります。推奨：
+
+- **owner**：1 つだけ。アカウント作成/削除とグローバル失効を担当；
+- **admin**：日常のシークレット、チケット、Agent 接続；
+- **viewer**：ダッシュボードと監査の読み取り専用。当番や監査向け；
+- セッションは 12 時間。viewer の書き込みは UI で隠すだけでなくサーバー側で拒否。
+
+> **テナントはラベルであり、強固な分離境界ではありません。** 同じマシン上のチーム/用途を絞り込むためのものです。
+
+### できること
+
+| ページ | 主な操作 | スクリーンショット |
+|---|---|---|
+| **概要** | 有効シークレット、ライブチケット、24h 発行/拒否、構成、最近のイベント、SSE | 上の hero |
+| **シークレット** | 追加/ローテーション/削除、env/token/json 絞り込み、マスク入力 | [secrets.png](docs/assets/web/secrets.png) |
+| **チケット** | 1 回限りリーフ、タスク親、更新、失効、全体 kill switch | [tickets.png](docs/assets/web/tickets.png) |
+| **接続** | 6 アダプタ、候補パス選択、dry-run プレビュー、Codex コマンド | [agents.png](docs/assets/web/agents.png) · [agent-picker.png](docs/assets/web/agent-picker.png) |
+| **監査** | イベント絞り込み、監査コマンド、ハッシュ鎖/署名検証（CLI） | [audit.png](docs/assets/web/audit.png) |
+| **ハニーポット** | canary 作成、token コピー、疑似発火、ヒット確認 | [honeypots.png](docs/assets/web/honeypots.png) |
+| **設定** | バックエンド指紋、チケット方針、アカウント/ロール、危険操作 | [settings.png](docs/assets/web/settings.png) · [accounts.png](docs/assets/web/accounts.png) |
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/web/secrets.png" alt="Credentials"><br><sub>シークレット：名前・種類・状態のみ。長期値はページに出ません</sub></td>
+<td width="50%"><img src="docs/assets/web/tickets.png" alt="Tickets"><br><sub>チケット：親はタスクを生かし、子は 1 回だけ使えます</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/assets/web/agents.png" alt="Agents"><br><sub>接続：複数候補があれば先に選択し、dry-run で確認</sub></td>
+<td width="50%"><img src="docs/assets/web/audit.png" alt="Audit"><br><sub>監査：発行・解決・失効・ハニーポットを追記型 JSONL で記録</sub></td>
+</tr>
+</table>
+
+### セキュリティ境界
+
+- 既定は `127.0.0.1` のみ。非 loopback は `AGENTVAULT_WEB_BIND` を明示し、少なくとも 1 アカウントが必要；
+- `web.token`、`web-accounts.json`、`web-sessions.json` は所有者限定権限。認証を無効化するスイッチはありません；
+- 長期シークレット値を UI に返しません。作成入力はマスク；
+- リモート公開は既定機能ではありません。必要ならリバースプロキシ + TLS + ネットワーク ACL の背後に置き、裸の HTTP をインターネットに出さないでください。
+
+---
+
+## 暗号化バックアップ、署名付き監査、TOML ラウンドトリップ
+
+### 1. バックアップに平文を残さない
+
+```bash
+agentvault backup create --path ~/.codex/config.toml
+agentvault backup list --path ~/.codex/config.toml
+agentvault backup restore --backup ~/.codex/config.toml.bak.1795350000000.enc --path ~/.codex/config.toml
+agentvault init --refresh --cleanup-backups
+```
+
+| 項目 | 実装 |
+|---|---|
+| 形式 | `AVBAK1` + ChaCha20-Poly1305 |
+| 鍵 | OS キーストアの `backup/master` |
+| 復元 | JSON/TOML を再解析してから上書き |
+| 互換 | `backup list` は旧来の平文 `*.bak.*` も表示 |
+
+### 2. ハッシュ鎖 + Ed25519 署名
+
+```bash
+agentvault audit --tail 20
+agentvault audit --verify
+agentvault audit --verify-signature
+agentvault audit --pubkey
+```
+
+ハッシュ鎖は挿入/削除を、Ed25519 署名は書き換えを検出します。ローカルの改ざん検知であり、リモートの不変ログではありません。
+
+### 3. Codex TOML は `toml_edit` で往復
+
+引用符、エスケープ、複数行配列、inline table、dotted key、コメント、CRLF、BOM を保持。不正な TOML は書き込み前に拒否し、文字列以外の args/env は `unsupported` としてスキップします。実 Codex 設定のコピーと境界サンプルを回帰テストに含めています。
 
 ---
 
@@ -693,16 +811,22 @@ cargo test --workspace
 cargo build --release
 ```
 
-ローカル結果（Windows 11、release バイナリ）：
+ローカル結果（Windows 11、2026-11-22）：
 
 ```text
-e2e:        9 passed
-adapters:  16 passed
-audit:      1 passed
-core:      10 passed
-keystore:   2 passed
-total:     38 passed, 0 failed
+e2e:        11 passed
+adapters:   24 passed
+corpus:      4 passed
+audit:       2 passed
+backup:      1 passed
+core:       10 passed
+keystore:    2 passed
+total:      54 passed, 0 failed, 1 ignored
+
+webapp Playwright: 2 passed (bootstrap token + login → add secret → issue ticket → pick agent path → filter audit)
 ```
+
+`1 ignored` は Windows ConPTY のマスク入力統合テストです。実際の対話端末が必要で、通過を偽装しません。
 
 <p align="center">
   <img src="docs/assets/diagrams/test-evidence.svg" alt="Test evidence" width="100%">
@@ -711,14 +835,16 @@ total:     38 passed, 0 failed
 カバー内容はハッピーパスではありません。
 
 - JSON / Codex / Qoder 設定の書き換えと冪等性；
-- 未知フィールド保持、複数行 TOML args；
+- 完全な TOML 往復：引用符、エスケープ、複数行配列、inline table、dotted key、コメント、CRLF、BOM、未知フィールド；
+- 不正 TOML の書き込み拒否とバックアップ復元；
 - ワンタイム、期限切れ、再生拒否；
 - task の hard-TTL 上限、renew が短縮しないこと；
 - revoke token / jti / all、rotate 後の旧チケット失効；
 - ハニーポットによるグローバル失効；
-- autostart 切替、単一インスタンス、broken pipe；
-- 実際の Codex 設定コピーに対する refresh；
-- user scope の `env install`、冪等性、アンインストールと復元。
+- Ed25519 監査署名とハッシュ鎖検証；
+- ChaCha20-Poly1305 暗号化バックアップの作成/復元/整理；
+- Web の token ログイン、アカウント/ロール、viewer 読み取り専用、Agent パス選択、SSE；
+- autostart 切替、単一インスタンス、broken pipe；実際の Codex 設定コピーに対する refresh。
 
 > Cursor/Qoder の GUI 内部ツール呼び出し自動化、macOS/Linux 実機検証、sandbox/egress はありません。これらは既知の限界に記載しており、完了したとは主張しません。
 
@@ -753,10 +879,10 @@ agentvault init --keep-env KEY            # 強制保持
 
 ### バックアップと失敗時の復元
 
-- 書き込み前：`mcp.json.bak.<timestamp>` / `config.toml.bak.<timestamp>`。
+- 書き込み前：暗号化バックアップ `<config>.bak.<ms>.enc`（`AVBAK1` + ChaCha20-Poly1305、鍵は OS キーストア）。
 - 書き込み後：再解析してラップ結果を検証し、失敗時はバックアップから復元。
-- バックアップには元の平文が含まれます。新しい設定を確認したら削除してください。
-- `init --refresh` もバックアップしますが、env は触りません。
+- `backup list` は移行/整理用に旧来の平文 `*.bak.*` も表示します。
+- `init --refresh --cleanup-backups` で、確認後にバックアップを削除できます。
 
 ---
 
@@ -781,8 +907,10 @@ agentvault init --keep-env KEY            # 強制保持
 | `revoke` | チケット / secret / すべてを失効 | `--ticket` `--secret` `--all` |
 | `rotate` | 値をローテーションし旧チケットを無効化 | `--secret` |
 | `status` | secret、バインド済み agent、live ticket を表示 | `--json` |
-| `audit` | JSONL 監査を表示 | `--tail N` `--json` |
+| `audit` | JSONL 監査を表示 | `--tail N` `--json` `--event` `--since` `--export` `--verify` `--verify-signature` `--pubkey` |
 | `honeypot add/list/check` | ハニーポット canary を管理 | `--json` |
+| `backup create/restore/list` | 設定の暗号化バックアップ、復元、一覧 | `--path` `--backup` |
+| `web` | ローカル Web コンソール | `--port` `--dist`；遠隔バインドは `AGENTVAULT_WEB_BIND` + `AGENTVAULT_WEB_ALLOW_REMOTE=1` |
 | `daemon` | broker をフォアグラウンド実行 | `--detach` |
 | `stop` | バックグラウンド broker を停止 | `--home` |
 
@@ -831,12 +959,14 @@ agentvault init --no-env   # 初回 init で環境変数を触らない
 
 これは「いくつかの単体テストを書いて完了」ではありません。実際の Windows 11 マシンで：
 
-- **38 件の Rust テスト**：`cargo test --workspace` 全通過。
+- **Rust テスト 54 件通過、ConPTY 1 件は明示的に ignored**：`cargo test --workspace`。
+- **ブラウザレベルの Playwright テスト 2 件**：token の一度限りブートストラップ、ログイン・シークレット追加・チケット発行・Agent パス選択・監査絞り込み。
 - **150 件の隔離 CLI チェック**：それぞれ独立した `--home` を使い、init、ticket、revoke、rotate、env、doctor、autostart、broken pipe をカバー。
-- **実際の Codex 設定コピー**：実 `config.toml` をコピーし、テスト server を追加して init/refresh を実行、`codex mcp get` で launcher と home を検証。
+- **実際の Codex 設定コピー**：実 5003 バイトの `config.toml` をバイト単位でバックアップし SHA-256 を記録、init/refresh 後 `codex mcp get` で launcher と home を検証。
 - **実際の Cursor / Qoder 探索**：パスレジストリ、空設定、プロジェクト優先を確認。
 - **実際の環境変数書き込みと復元**：user scope の `env install`、冪等性、`env uninstall` 復元。
 - **実際の攻撃セマンティクス**：再生拒否、期限切れ拒否、グローバル失効、ローテーション無効化、ハニーポット発火。
+- **新しい回帰**：TOML 往復、暗号化バックアップ、Ed25519 監査署名、Web ロールと viewer 読み取り専用。
 
 <p align="center">
   <img src="docs/assets/terminal/replay-denied.svg" alt="Replay denied" width="100%">
@@ -890,9 +1020,26 @@ agentvault init --no-env   # 初回 init で環境変数を触らない
 
 - 追記型 JSONL：時刻、actor、イベント、secret、ticket、結果。
 - `audit --tail N` で表示。
+- 各行に `prev_hash`/`hash` のハッシュ鎖。`audit --verify` が最初の断裂を報告。
+- 各行に Ed25519 署名。`audit --verify-signature` で検証、`audit --pubkey` で公開鍵。
 - ローテーション時は古い監査ファイルを保持。
 - ハニーポット token は一意で、ヒットするとグローバル失効。
 - ハニーポット check が本物の secret を漏らすことはありません。
+
+### Web コンソール
+
+- 既定は `127.0.0.1` のみ。非 loopback は明示設定で、少なくとも 1 アカウントが必要。
+- `web.token` はローカルセッション、パスワードは Argon2id、セッション token は SHA-256 で保存。
+- owner/admin は書き込み可能、viewer はサーバー側で読み取り専用。
+- テナントは絞り込み用ラベルで、強固な分離境界ではありません。
+- ページは長期シークレット値を返さず、SSE は状態とイベントのみを配信します。
+
+### 暗号化バックアップ
+
+- `AVBAK1` + ChaCha20-Poly1305。
+- 鍵は OS キーストアの `backup/master`。
+- 復元前に JSON/TOML を再解析し、失敗時は対象を壊しません。
+- `init --cleanup-backups` は暗号化バックアップと旧平文 `.bak.*` を整理します。
 
 ---
 
@@ -905,13 +1052,14 @@ v0.1 の実際の限界です。脚注に隠しません。
 3. **デバイスバインディングは TPM ではない**：指紋チェックであり、ハードウェア封印ではありません。
 4. **未移行の平文は対象外**：v0.1 は既知の設定のみ扱います。スクリプト、`.env`、ログの平文は対象外です。
 5. **env 移行はヒューリスティック**：key マーカー + 値の形で、誤判定します。dry-run と `--migrate-env` / `--keep-env` を使ってください。
-6. **Codex TOML は限定的**：quoted server names、inline/env サブテーブル、複数行 args に対応。`.env` 以外の bare nested table は無視されます。
+6. **Codex TOML は `toml_edit` で往復**：引用符、エスケープ、複数行配列、inline table、dotted key、コメント、CRLF、BOM をカバー。文字列以外の args/env は `unsupported` としてスキップします。
 7. **JSON は strict 必須**：JSONC コメント/末尾カンマは明確なエラーで拒否。UTF-8 BOM は許可。
 8. **`~/.claude.json` はトップレベルのみ**：`projects.*.mcpServers` は自動書き換えしません。プロジェクトの `.mcp.json` に `--path` を使ってください。
 9. **`init` は既定で値注入、チケットではない**：stock MCP server と互換。チケット対応は `run --name <同名 secret>` または `--session`。
-10. **GUI 自動化なし**：Cursor/Qoder の GUI 内部ツール呼び出しは自動化していません。CLI と設定レイヤーは検証済みです。
+10. **GUI 呼び出し自動化なし**：Cursor/Qoder の GUI 内部ツール呼び出しは自動化していません。CLI、設定、Web のクリック経路は検証済みです。
 11. **macOS/Linux 実機検証は未実施**：コードと単体テストはクロスプラットフォームですが、実機実行は Windows 11 です。
-12. **Web コンソールは延期**：このリポジトリは CLI のみ。web コードは今回のリリースに含みません。
+12. **Web コンソールはローカル優先**：アカウント、ロール、テナントラベルはありますが、強化済みのリモートマルチテナントサービスではありません。遠隔公開には TLS、リバースプロキシ、ネットワーク ACL、バックアップ方針が必要です。
+13. **ConPTY マスク入力テストは ignored のまま**：実際の対話端末が必要で、通過を偽装しません。
 
 ---
 
@@ -960,13 +1108,13 @@ agentvault run --name my/API_KEY -- node server.js
 # 子プロセスは AGENTVAULT_TICKET を読み、agentvault resolve を呼ぶ
 ```
 
-### Q9：なぜ Web コンソールを先に作らない？
+### Q9：Web コンソールと CLI の関係は？
 
-CLI が中核であり、最小の信頼面です。設定移行、チケット意味論、失効、監査を先に堅牢にします。このリポジトリは CLI のみを公開します。
+CLI は最小の信頼面であり自動化の入口です。Web コンソールは同じバイナリ内のローカル可視化層で、同じ `AGENTVAULT_HOME` と broker を読みます。既定は `127.0.0.1` のみ。最初は `web.token` でログインし、設定で owner/admin/viewer アカウントを作成します。クラウド SaaS ではなく、既定で遠隔公開もしません。
 
 ### Q10：チームで 1 つの vault を共有できる？
 
-v0.1 は単一マシン・単一ユーザーのローカル vault です。チーム共有、中央ポリシー、リモート監査は将来の課題です。同じ home ディレクトリをネットワーク共有に置かないでください。
+v0.1 は 1 台のマシン上で owner/admin/viewer アカウントとテナントラベルを提供し、小規模チームの共用ワークステーションに向いています。同じ home をネットワーク共有に置いて同時利用することは**できません**。マシン間の強固な分離も約束しません。中央ポリシー、遠隔監査、真のマルチテナントは今後です。
 
 ---
 
@@ -976,22 +1124,28 @@ v0.1 は単一マシン・単一ユーザーのローカル vault です。チ�
 crates/
   core/      domain types, token signing, paths, JSON store
   keystore/  OS keystore + encrypted-file fallback + derivation
-  audit/     append-only JSONL audit
-  adapters/  JSON mcpServers + Codex TOML discovery and rewrite
+  audit/     append-only JSONL audit + hash chain + Ed25519 signatures
+  backup/    AVBAK1 encrypted config backups (ChaCha20-Poly1305)
+  adapters/  JSON mcpServers + full Codex TOML round-trip via toml_edit
   broker/    local TCP broker, ticket lifecycle, client
+  web/       axum console, auth/roles/tenants, SSE, embedded assets
   cli/       agentvault binary
+webapp/      React + Vite console UI, Playwright click test
 docs/
-  assets/    logo, diagrams, terminal evidence
+  assets/    logo, diagrams, terminal evidence, web screenshots
 ```
 
 主な入口：
 
-- `crates/cli/src/main.rs`：コマンド解析、init/issue/run/doctor など。
+- `crates/cli/src/main.rs`：コマンド解析、init/issue/run/doctor/web など。
 - `crates/adapters/src/lib.rs`：パスレジストリ、JSON の plan/apply/refresh、env ヒューリスティック。
-- `crates/adapters/src/codex.rs`：Codex TOML の解析と書き換え。
+- `crates/adapters/src/codex.rs`：Codex TOML の完全往復と失敗時拒否。
+- `crates/backup/src/lib.rs`：暗号化バックアップと復元。
+- `crates/audit/src/lib.rs`：ハッシュ鎖と Ed25519 署名。
 - `crates/broker/src/lib.rs`：ローカル broker とチケットライフサイクル。
 - `crates/core/src/token.rs`：HMAC チケットの署名/検証。
 - `crates/keystore/src/lib.rs`：DPAPI / Keychain / Secret Service / file backend。
+- `crates/web/src/lib.rs`、`webapp/src/App.tsx`：コンソール API と UI。
 
 ---
 
@@ -999,12 +1153,15 @@ docs/
 
 - [x] L0：OS キーストア、デバイスバインディング、ハードウェア指紋、署名付きチケット
 - [x] L1：ローカル broker、短期チケット、task/child/renew、rotate/revoke
-- [x] L4：JSONL 監査、ハニーポット canary、グローバル失効
+- [x] L4：JSONL 監査、Ed25519 署名、ハニーポット canary、グローバル失効
 - [x] `init --refresh`：アップグレード後の launcher/home 更新
 - [x] 埋め込み env 参照ガード（`${HOME}/...`、`%VAR%\...`）
+- [x] Web コンソール：単一バイナリ、アカウント/ロール/テナントラベル、SSE、パス選択
+- [x] 暗号化バックアップ（AVBAK1）、完全 TOML 往復、監査署名検証
+- [ ] デスクトップシェル：ローカルプレビュー済み、リポジトリには未コミット
 - [ ] L2：プロセスサンドボックス / microVM
 - [ ] L3：egress allowlist / DLP
-- [ ] Web コンソール（別リポジトリ / 将来バージョン）
+- [ ] 遠隔 Web 配備の強化 / 中央ポリシー / 強固なマルチテナント
 - [ ] macOS/Linux 実機検証と CI カバレッジ
 - [ ] TPM / Secure Enclave バインディング
 - [ ] チームポリシーと中央監査

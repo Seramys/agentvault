@@ -37,7 +37,10 @@ impl FileLock {
                         path: path.to_path_buf(),
                     });
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::AlreadyExists
+                        || e.kind() == std::io::ErrorKind::PermissionDenied =>
+                {
                     // Recover a lock left behind by a crashed process.
                     if let Ok(meta) = std::fs::metadata(path) {
                         if let Ok(modified) = meta.modified() {

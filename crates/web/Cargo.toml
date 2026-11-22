@@ -1,0 +1,23 @@
+[package]
+name = "agentvault-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentvault-core.workspace = true
+agentvault-keystore.workspace = true
+agentvault-audit.workspace = true
+agentvault-adapters.workspace = true
+agentvault-broker.workspace = true
+agentvault-backup.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+argon2 = "0.5"
+axum = "0.7"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }
+
+
+mime_guess = "2"
+futures-util = "0.3"

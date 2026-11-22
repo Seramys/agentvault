@@ -249,14 +249,66 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         ensure_dir(parent)?;
     }
-    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+    // The temp name must be unique per write: concurrent writers in the same
+    // process used to share `.tmp<PID>` and clobber each other on Windows.
+    let tmp = path.with_extension(format!("tmp{}-{}", std::process::id(), random_hex(6)));
     std::fs::write(&tmp, data)?;
-    // On Windows, rename fails if the destination exists; remove first.
-    if path.exists() {
-        let _ = std::fs::remove_file(path);
+    let mut last: Option<std::io::Error> = None;
+    for attempt in 0..8 {
+        match replace_file(&tmp, path) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                last = Some(error);
+                if attempt < 7 {
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+            }
+        }
     }
-    std::fs::rename(&tmp, path)?;
-    Ok(())
+    let _ = std::fs::remove_file(&tmp);
+    Err(last
+        .map(Into::into)
+        .unwrap_or_else(|| Error::Other("atomic write failed".into())))
+}
+
+#[cfg(windows)]
+fn replace_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+    let from: Vec<u16> = from
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let to: Vec<u16> = to
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let ok = unsafe {
+        MoveFileExW(
+            from.as_ptr(),
+            to.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if ok == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
+}
+
+#[cfg(not(windows))]
+fn replace_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::rename(from, to)
 }
 
 #[cfg(test)]

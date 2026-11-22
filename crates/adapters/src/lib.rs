@@ -1,8 +1,7 @@
 //! Adapters for agent MCP configuration files.
 //!
-//! v0.1 supports the JSON `mcpServers` shape used by Claude Code and Cursor.
-//! Codex's TOML config is detected and reported as unsupported instead of being
-//! silently rewritten.
+//! JSON `mcpServers` configs (Claude, Cursor, Gemini, Windsurf, Cline, Qoder,
+//! generic) are handled here; Codex's TOML config lives in [`codex`].
 
 pub mod codex;
 
@@ -113,9 +112,56 @@ impl McpConfig {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        let mut data = serde_json::to_vec_pretty(self)?;
-        data.push(b'\n');
-        agentvault_core::util::atomic_write(path, &data)
+        let original = std::fs::read(path).ok();
+        let bom = original
+            .as_deref()
+            .map(|data| data.starts_with(&[0xEF, 0xBB, 0xBF]))
+            .unwrap_or(false);
+        let crlf = original
+            .as_deref()
+            .map(|data| data.windows(2).any(|window| window == b"\r\n"))
+            .unwrap_or(false);
+
+        let mut text = String::from_utf8(serde_json::to_vec_pretty(self)?)
+            .map_err(|error| Error::Other(format!("serialized config is not UTF-8: {error}")))?;
+        text.push('\n');
+        if crlf {
+            text = text.replace("\r\n", "\n").replace('\n', "\r\n");
+        }
+        // Fail closed: never write a document that cannot be read back.
+        serde_json::from_str::<Self>(&text)?;
+
+        let mut data = Vec::with_capacity(text.len() + 3);
+        if bom {
+            data.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+        }
+        data.extend_from_slice(text.as_bytes());
+
+        if let Err(error) = agentvault_core::util::atomic_write(path, &data) {
+            restore_config(path, original.as_deref());
+            return Err(error);
+        }
+        match Self::load(path) {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                restore_config(path, original.as_deref());
+                Err(Error::Other(format!(
+                    "config failed post-write validation and was restored: {error}"
+                )))
+            }
+        }
+    }
+}
+
+/// Put the exact previous bytes back, or remove a file this write created.
+fn restore_config(path: &Path, original: Option<&[u8]>) {
+    match original {
+        Some(bytes) => {
+            let _ = agentvault_core::util::atomic_write(path, bytes);
+        }
+        None => {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
 
@@ -822,7 +868,55 @@ pub fn backup_file(path: &Path) -> Result<PathBuf> {
         .unwrap_or("config");
     let backup = path.with_file_name(format!("{name}.bak.{stamp}"));
     std::fs::copy(path, &backup)?;
+    restrict_private(&backup);
     Ok(backup)
+}
+
+/// Delete every `<file>.bak.<timestamp>` next to a config. Backups contain the
+/// original plaintext, so cleanup is an explicit user action.
+pub fn cleanup_backups(path: &Path) -> Result<Vec<PathBuf>> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+        return Ok(Vec::new());
+    };
+    let prefix = format!("{name}.bak.");
+    let mut removed = Vec::new();
+    for entry in std::fs::read_dir(parent)? {
+        let entry = entry?;
+        let candidate = entry.path();
+        if !candidate.is_file() {
+            continue;
+        }
+        let Some(file_name) = candidate.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if file_name.starts_with(&prefix) {
+            std::fs::remove_file(&candidate)?;
+            removed.push(candidate);
+        }
+    }
+    Ok(removed)
+}
+
+fn restrict_private(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(user) = std::env::var("USERNAME") {
+            if !user.is_empty() {
+                let _ = std::process::Command::new("icacls")
+                    .arg(path)
+                    .arg("/inheritance:r")
+                    .arg("/grant:r")
+                    .arg(format!("{user}:F"))
+                    .output();
+            }
+        }
+    }
 }
 
 pub fn restore_file(backup: &Path, target: &Path) -> Result<()> {

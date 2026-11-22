@@ -3,9 +3,11 @@ members = [
     "crates/core",
     "crates/keystore",
     "crates/audit",
+    "crates/backup",
     "crates/adapters",
     "crates/broker",
     "crates/cli",
+    "crates/web",
 ]
 resolver = "2"
 
@@ -21,8 +23,11 @@ homepage = "https://github.com/Seramys/agentvault"
 agentvault-core = { path = "crates/core" }
 agentvault-keystore = { path = "crates/keystore" }
 agentvault-audit = { path = "crates/audit" }
+agentvault-backup = { path = "crates/backup" }
 agentvault-adapters = { path = "crates/adapters" }
 agentvault-broker = { path = "crates/broker" }
+agentvault-web = { path = "crates/web" }
+
 
 anyhow = "1"
 thiserror = "1"
@@ -35,8 +40,12 @@ hkdf = "0.12"
 rand = "0.8"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
+toml_edit = "0.22"
 
 hex = "0.4"
+chacha20poly1305 = "0.10"
+ed25519-dalek = "2"
+
 clap = { version = "4", default-features = false, features = ["std", "derive", "env", "help", "usage", "error-context", "suggestions"] }
 
 [profile.release]

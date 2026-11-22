@@ -13,7 +13,7 @@
   <a href="https://github.com/Seramys/agentvault/actions/workflows/ci.yml"><img src="https://github.com/Seramys/agentvault/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-6D5BD0.svg" alt="License"></a>
   <img src="https://img.shields.io/badge/rust-stable-CE422B.svg" alt="Rust stable">
-  <img src="https://img.shields.io/badge/status-v0.1-0F9F6E.svg" alt="v0.1">
+  <img src="https://img.shields.io/badge/status-v0.1%20%C2%B7%20web-0F9F6E.svg" alt="v0.1 · web">
 </p>
 
 <p align="center">
@@ -23,15 +23,16 @@
 <p align="center">
   <a href="#30-秒理解">30 秒理解</a> ·
   <a href="#快速开始">快速开始</a> ·
+  <a href="#web-控制台">Web 控制台</a> ·
   <a href="#图文操作指南">图文操作指南</a> ·
   <a href="#命令手册">命令手册</a> ·
   <a href="#安全模型">安全模型</a> ·
   <a href="#真实测试证据">测试证据</a>
 </p>
 
-> **v0.1 范围**：已实现密钥托管（L0）、短期票据与本地 broker（L1）、审计与蜜罐（L4）。沙箱（L2）与出站流量控制/DLP（L3）明确留到后续版本。Web 控制台暂缓，本仓库只发布 CLI。
+> **当前范围**：L0 密钥托管、L1 短期票据与本地 broker、L4 审计/蜜罐，以及本地 Web 控制台（账号与角色、租户标签、SSE 实时刷新、审计签名校验、加密备份）。L2 沙箱与 L3 出站控制/DLP 仍在后续版本。
 >
-> **一句话**：你不需要再决定“这个 token 要不要写进 `mcp.json`”。先存进 vault，让 agent 用票据来换。
+> **一句话**：你不需要再决定“这个 token 要不要写进 `mcp.json`”。先存进 vault，让 agent 用票据来换；需要看全局时，打开本地控制台。
 
 ---
 
@@ -47,6 +48,8 @@
 - [五层模型](#五层模型)
 - [安装](#安装)
 - [快速开始](#快速开始)
+- [Web 控制台](#web-控制台)
+- [加密备份、签名审计与 TOML 往返](#加密备份签名审计与-toml-往返)
 - [图文操作指南](#图文操作指南)
   - [第 0 步：先看全景](#第-0-步先看全景)
   - [第 1 步：安装并确认环境](#第-1-步安装并确认环境)
@@ -126,6 +129,7 @@ AgentVault 把流程改成：
 | **Vault** | 在 OS keystore 中保管长期密钥；签发/校验票据 | 不把长期密钥交给 agent |
 | **Broker** | 只监听 `127.0.0.1`；处理 issue/resolve/revoke/rotate | 不对外网开放；不是远程服务器 |
 | **Agent wrapper** | `agentvault run` 启动 MCP server，注入票据或短期值 | 不修改原 MCP server 的协议 |
+| **Web console** | 读取同一个 home/broker，展示凭证、票据、审计、蜜罐 | 默认只监听 loopback；不替代 CLI 自动化 |
 
 最短的一次体验：
 
@@ -140,6 +144,14 @@ agentvault issue --secret demo/token --ttl 60s
 agentvault resolve --ticket av1...
 ```
 
+想先看界面而不是命令行：
+
+```bash
+agentvault web --port 8787
+# 浏览器打开 http://127.0.0.1:8787
+# 第一次用 AGENTVAULT_HOME/web.token 登录
+```
+
 ---
 
 ## 它是什么，不是什么
@@ -149,7 +161,9 @@ agentvault resolve --ticket av1...
 - 一个本地 CLI + 本地 broker 的 **credential lifecycle layer**。
 - 一个把 MCP 配置中的明文 env **迁移到 OS keystore**、把命令改写成 `agentvault run ...` 的迁移工具。
 - 一个带 **TTL、max_uses、任务票据、子票据、renew、rotate、revoke** 的票据系统。
-- 一个带 **JSONL 审计、蜜罐 canary、全局撤销** 的本地可观测层。
+- 一个带 **JSONL 审计、Ed25519 审计签名、蜜罐 canary、全局撤销** 的本地可观测层。
+- 一个 **本地 Web 控制台**：单二进制嵌入 React 前端，支持凭证、票据、Agent 接入、审计、蜜罐、账号角色与租户标签；默认只监听 `127.0.0.1`。
+- 一个把配置备份变成 **ChaCha20-Poly1305 加密文件** 的备份工具，避免“为了安全迁移，先留下一份明文 `.bak`”。
 
 **它不是：**
 
@@ -203,11 +217,15 @@ L0 + L1 已经能解决“配置里不出现长期密钥、权限有时间边界
 
 ### 方式 A：从源码构建（当前推荐）
 
-要求：stable Rust（edition 2021），Windows / macOS / Linux 均可。
+要求：stable Rust（edition 2021），Windows / macOS / Linux 均可。要带 Web 控制台，还需要 Node.js 20+ 构建一次前端；只做 CLI 可以跳过 Node。
 
 ```bash
 git clone https://github.com/Seramys/agentvault.git
 cd agentvault
+
+# 含 Web 控制台：前端资源在编译时嵌入二进制
+cd webapp && npm ci && npm run build && cd ..
+
 cargo build --release
 ```
 
@@ -234,7 +252,7 @@ agentvault --version
 
 ### 方式 C：GitHub Release
 
-发布后可以从 Release 下载对应平台的二进制；当前 v0.1 以源码构建为主，确保你拿到的是和本文档一致的版本。
+Release 页有 v0.1.0 的 CLI 二进制；Web 控制台、加密备份、签名审计等新功能请先从源码构建，下一版发布后再提供对应安装包。
 
 ---
 
@@ -300,6 +318,127 @@ agentvault --home "$HOME/.agentvault-demo" revoke --all
 ```
 
 `revoke --all` 会推进全局 epoch，所有旧票据立即失效；之后签发的票据使用新 epoch。
+
+---
+
+## Web 控制台
+
+<p align="center">
+  <img src="docs/assets/web/console-hero.png" alt="AgentVault local web console" width="100%">
+</p>
+
+CLI 解决“配置里不要出现明文”；Web 控制台解决“人怎么在 10 秒内看清现在发生了什么”。它不是另一个服务端产品：`agentvault web` 仍然是一个本地单二进制，React 资源在编译时嵌入二进制，读的是同一个 `AGENTVAULT_HOME`、同一个 broker、同一份审计。
+
+```bash
+# 默认 127.0.0.1:8787；启动后会打印访问地址和 web.token 路径
+agentvault web
+
+# 换端口
+agentvault web --port 8790
+```
+
+### 登录方式
+
+| 方式 | 适合谁 | 凭证放在哪 |
+|---|---|---|
+| **本地会话** | 单机第一次进入、应急管理 | `AGENTVAULT_HOME/web.token`；只在本机、文件权限受限 |
+| **本地账号** | 一台机器多人使用、区分 owner / admin / viewer | `web-accounts.json`，密码是 **Argon2id** 哈希；会话 token 只存 SHA-256 哈希 |
+
+<p align="center">
+  <img src="docs/assets/web/login.png" alt="Login" width="88%">
+</p>
+
+第一次用 `web.token` 以 owner 身份进入，然后在「设置 → 账号与租户」里创建长期账号。默认建议：
+
+- **owner**：只留 1 个，负责创建/删除账号与全局撤销；
+- **admin**：日常发凭证、发票据、接入 Agent；
+- **viewer**：只读看板与审计，适合值班、审计同事；
+- 会话默认 12 小时；viewer 的任何写请求都会被服务端拒绝，而不是只在 UI 隐藏按钮。
+
+> **租户字段是标签，不是硬隔离**：它用于同一台机器上区分团队/用途，方便筛选与交接；v0.1 不承诺跨租户的强隔离或独立密钥空间。
+
+### 控制台能做什么
+
+| 页面 | 关键动作 | 真实截图 |
+|---|---|---|
+| **概览** | 活跃凭证、活票、24h 签发/拒绝、构成、最近事件、SSE 实时刷新 | 上方 hero |
+| **凭证** | 新建/轮换/删除；按 env / token / json 筛选；密文输入 | [secrets.png](docs/assets/web/secrets.png) |
+| **票据** | 一次性叶子票、任务父票、续期、撤销、全局吊销 | [tickets.png](docs/assets/web/tickets.png) |
+| **接入** | 六个 Agent 适配器、候选路径选择、dry-run 预览、复制 Codex 命令 | [agents.png](docs/assets/web/agents.png) · [agent-picker.png](docs/assets/web/agent-picker.png) |
+| **审计** | 事件筛选、复制审计命令、签名/哈希链校验（CLI） | [audit.png](docs/assets/web/audit.png) |
+| **蜜罐** | 创建 canary、复制 token、模拟触发、查看命中 | [honeypots.png](docs/assets/web/honeypots.png) |
+| **设置** | 后端指纹、票据策略、账号与角色、危险操作 | [settings.png](docs/assets/web/settings.png) · [accounts.png](docs/assets/web/accounts.png) |
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/web/secrets.png" alt="Credentials"><br><sub>凭证：长期值不进配置，页面只显示名称、类型和状态</sub></td>
+<td width="50%"><img src="docs/assets/web/tickets.png" alt="Tickets"><br><sub>票据：父票负责“任务还活着”，子票负责“每次调用只活一次”</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/assets/web/agents.png" alt="Agents"><br><sub>接入：检测到多个候选路径时先让你选，再 dry-run 预览</sub></td>
+<td width="50%"><img src="docs/assets/web/audit.png" alt="Audit"><br><sub>审计：追加式 JSONL，签发、解析、撤销、蜜罐都有记录</sub></td>
+</tr>
+</table>
+
+### 安全边界
+
+- 默认只绑定 `127.0.0.1`；把地址改成非 loopback 需要显式设置 `AGENTVAULT_WEB_BIND`，并且必须先有至少一个账号；
+- `web.token` 与 `web-accounts.json`、`web-sessions.json` 都以私有权限写入；控制台不提供“关闭鉴权”的开关；
+- 页面不会显示长期密钥值；创建凭证时的输入框是遮罩输入；
+- 远程部署不是默认能力：如果确实要跨机器访问，请放在反向代理 + TLS + 网络 ACL 后面，并先读 [安全模型](#安全模型)。不要把裸 HTTP 控制台直接暴露到公网。
+
+---
+
+## 加密备份、签名审计与 TOML 往返
+
+这次升级不只是“加一个页面”，底层也补了三块安全工程。
+
+### 1. 备份不再留下明文
+
+旧行为是 `mcp.json.bak.<timestamp>`，迁移完却把明文密钥留在磁盘上。现在是加密备份：
+
+```bash
+# 创建：<config>.bak.<ms>.enc
+agentvault backup create --path ~/.codex/config.toml
+
+# 列出加密备份与历史明文备份
+agentvault backup list --path ~/.codex/config.toml
+
+# 恢复：先解密到目标，再重新解析校验；失败不会留下半截文件
+agentvault backup restore --backup ~/.codex/config.toml.bak.1795350000000.enc --path ~/.codex/config.toml
+
+# 确认新配置可用后，清理备份
+agentvault init --refresh --cleanup-backups
+```
+
+| 项目 | 实现 |
+|---|---|
+| 格式 | `AVBAK1` magic + ChaCha20-Poly1305 |
+| 备份密钥 | OS keystore 中的 `backup/master`，不落明文 |
+| 恢复校验 | JSON / TOML 重新解析通过后才写入 |
+| 兼容 | `backup list` 仍能看到旧的 `*.bak.*` 明文文件，方便迁移 |
+
+### 2. 审计不只知道“有没有改”，还知道“是谁签的”
+
+审计仍是追加式 JSONL，但每行都有哈希链，并可用 Ed25519 签名验证：
+
+```bash
+agentvault audit --tail 20
+agentvault audit --verify                 # 检查哈希链，报告第一处断裂
+agentvault audit --verify-signature       # 验证每一行的 Ed25519 签名
+agentvault audit --pubkey                 # 打印审计签名公钥（hex）
+```
+
+这解决的是“本地日志被悄悄改一行”的问题：哈希链防插入/删除，签名防重写。它不是远程不可篡改日志；要把审计送到只写存储，仍需外部系统。
+
+### 3. Codex TOML 从“行解析”改成完整往返
+
+Codex 的 `config.toml` 不再用最小行解析器，而是 `toml_edit`：
+
+- 单/双引号、转义、多行数组、inline table、dotted key、注释、CRLF、UTF-8 BOM 都保留；
+- 写入前重新解析，解析失败就拒绝写入并从备份恢复；
+- 非字符串 args / env 不会猜，标记为 `unsupported` 并跳过；
+- 真实 Codex 配置副本与多种边界样本进入 corpus 回归。
 
 ---
 
@@ -695,18 +834,27 @@ agentvault audit --tail 20
 ```bash
 cargo test --workspace
 cargo build --release
+
+# Web 控制台的浏览器级点击测试（需要 Chrome 和 Playwright）
+cd webapp && npm run test:e2e
 ```
 
-本机结果（Windows 11，release 二进制）：
+本机结果（Windows 11，2026-11-22）：
 
 ```text
-e2e:        9 passed
-adapters:  16 passed
-audit:      1 passed
-core:      10 passed
-keystore:   2 passed
-total:     38 passed, 0 failed
+e2e:        11 passed
+adapters:   24 passed
+corpus:      4 passed
+audit:       2 passed
+backup:      1 passed
+core:       10 passed
+keystore:    2 passed
+total:      54 passed, 0 failed, 1 ignored
+
+webapp Playwright: 2 passed (bootstrap token + login → add secret → issue ticket → pick agent path → filter audit)
 ```
+
+`1 ignored` 是 Windows ConPTY 交互式遮罩输入测试：它需要真实交互终端，CI 和当前非交互 harness 里不伪造通过。
 
 <p align="center">
   <img src="docs/assets/diagrams/test-evidence.svg" alt="Test evidence" width="100%">
@@ -715,14 +863,16 @@ total:     38 passed, 0 failed
 测试覆盖的不是 happy path，而是：
 
 - JSON / Codex / Qoder 配置重写与幂等；
-- 未知字段保留、多行 TOML args；
+- 完整 TOML 往返：引号、转义、多行数组、inline table、dotted key、注释、CRLF、BOM、未知字段；
+- 解析失败时拒绝写入，并用加密/明文备份恢复；
 - 一次票据、过期票据、重放拒绝；
 - task 票据的 hard-ttl 上限、renew 不缩短；
 - revoke token / jti / all、rotate 后旧票据失效；
 - 蜜罐触发全局撤销；
-- autostart 开关、单实例、broken pipe；
-- 真实 Codex 配置副本的刷新；
-- `env install` 的用户级写入、幂等、卸载与恢复。
+- Ed25519 审计签名与哈希链校验；
+- ChaCha20-Poly1305 加密备份的创建、恢复、清理；
+- Web 控制台的 token 登录、账号角色、viewer 只读、Agent 路径选择、SSE 刷新；
+- autostart 开关、单实例、broken pipe；真实 Codex 配置副本的刷新。
 
 > 没有 GUI 级 Cursor/Qoder 工具调用自动化；没有 macOS/Linux 运行时验证；没有 sandbox/egress。这些都在“已知边界”里，不假装有。
 
@@ -757,10 +907,10 @@ agentvault init --keep-env KEY            # 强制保留
 
 ### 备份与失败恢复
 
-- 写入前生成 `mcp.json.bak.<timestamp>` / `config.toml.bak.<timestamp>`；
+- 写入前生成加密备份 `<config>.bak.<ms>.enc`（`AVBAK1` + ChaCha20-Poly1305，密钥在 OS keystore）；
 - 写入后重新解析并检查包装结果；失败则从备份恢复；
-- 备份文件包含原始明文值，确认新配置可用后应删除备份；
-- `init --refresh` 同样先备份，但不碰 env。
+- `backup list` 仍会列出历史明文 `*.bak.*`，方便迁移与清理；
+- `init --refresh --cleanup-backups` 可在确认新配置可用后清理备份。
 
 ---
 
@@ -768,7 +918,7 @@ agentvault init --keep-env KEY            # 强制保留
 
 | 命令 | 作用 | 关键参数 |
 |---|---|---|
-| `init` | 发现并包装 MCP 配置，迁移密钥 env | `--dry-run` `--list` `--refresh` `--agent` `--path` `--migrate-env` `--keep-env` `--no-env` `--rebind` |
+| `init` | 发现并包装 MCP 配置，迁移密钥 env | `--dry-run` `--list` `--refresh` `--agent` `--path` `--migrate-env` `--keep-env` `--no-env` `--rebind` `--cleanup-backups` |
 | `doctor` | 诊断 home、broker、keystore、agent 配置 | `--home` |
 | `env show` | 显示 home 来源与持久化值 | `--home` |
 | `env install` | 持久化 `AGENTVAULT_HOME` + PATH | `--scope user\|machine` `--no-path` `--dry-run` |
@@ -785,8 +935,10 @@ agentvault init --keep-env KEY            # 强制保留
 | `revoke` | 撤销票据 / secret / 全部 | `--ticket` `--secret` `--all` |
 | `rotate` | 轮换值并使旧票据失效 | `--secret` |
 | `status` | 查看 secrets、绑定 agent、live tickets | `--json` |
-| `audit` | 查看 JSONL 审计 | `--tail N` `--json` |
+| `audit` | 查看 JSONL 审计 | `--tail N` `--json` `--event` `--since` `--export` `--verify` `--verify-signature` `--pubkey` |
 | `honeypot add/list/check` | 管理蜜罐 canary | `--json` |
+| `backup create/restore/list` | 加密配置备份、恢复与列表 | `--path` `--backup` |
+| `web` | 启动本地 Web 控制台 | `--port` `--dist`；远程绑定需 `AGENTVAULT_WEB_BIND` + `AGENTVAULT_WEB_ALLOW_REMOTE=1` |
 | `daemon` | 前台运行 broker | `--detach` |
 | `stop` | 停止后台 broker | `--home` |
 
@@ -835,12 +987,14 @@ agentvault init --no-env   # 首次 init 不碰环境变量
 
 本项目不是“写几个单元测试就说完成”。在 Windows 11 实机上做了：
 
-- **38 项 Rust 测试**：`cargo test --workspace` 全通过；
+- **54 项 Rust 测试通过，1 项 ConPTY 交互测试显式 ignored**：`cargo test --workspace`；
+- **2 项 Web 浏览器级点击测试**：Playwright 覆盖 token 一次性引导，以及登录、建凭证、发票据、选择 Agent 路径、筛选审计；
 - **150 项隔离 CLI 检查**：每次用独立 `--home`，覆盖 init、ticket、revoke、rotate、env、doctor、autostart、broken pipe 等；
-- **真实 Codex 配置副本**：复制真实 `config.toml`，加入测试 server，执行 init/refresh，再用 `codex mcp get` 验证 launcher 和 home；
+- **真实 Codex 配置副本**：复制真实 `config.toml`，加入测试 server，执行 init/refresh，再用 `codex mcp get` 验证 launcher 和 home；真实配置为 5003 字节，操作前做字节级备份与 SHA-256；
 - **真实 Cursor / Qoder 环境探测**：确认路径注册表、空配置、项目配置优先级；
 - **真实环境变量写入与恢复**：`env install` 用户级写入、幂等、`env uninstall` 恢复；
-- **真实攻击语义**：重放被拒、过期被拒、全局撤销、轮换失效、蜜罐触发。
+- **真实攻击语义**：重放被拒、过期被拒、全局撤销、轮换失效、蜜罐触发；
+- **新增回归**：完整 TOML 往返、加密备份、Ed25519 审计签名、Web 账号角色与 viewer 只读。
 
 <p align="center">
   <img src="docs/assets/terminal/replay-denied.svg" alt="Replay denied" width="100%">
@@ -894,9 +1048,27 @@ agentvault init --no-env   # 首次 init 不碰环境变量
 
 - 追加式 JSONL；记录时间、actor、事件、secret、ticket、结果；
 - `audit --tail N` 查看；
+- 每行有哈希链，`audit --verify` 报告第一处断裂；
+- 每行有 Ed25519 签名，`audit --verify-signature` 逐行验证，`audit --pubkey` 输出公钥；
 - 轮换保留旧审计文件；
 - 蜜罐 token 是唯一值，命中即触发全局撤销；
 - 蜜罐检查不会泄露真实 secret。
+
+### Web 控制台
+
+- 默认绑定 `127.0.0.1`；非 loopback 绑定必须显式开启，且要求至少一个账号；
+- 本地会话 token 写在 `web.token`；账号密码 Argon2id，会话 token 只存 SHA-256；
+- owner / admin 可写，viewer 在服务端被强制只读；
+- 租户字段用于筛选与交接，是逻辑标签，不是强隔离边界；
+- 页面不返回长期密钥值；凭证创建使用遮罩输入；
+- SSE 只推状态与事件，不推 secret 值。
+
+### 加密备份
+
+- 备份格式 `AVBAK1` + ChaCha20-Poly1305；
+- 密钥来自 OS keystore 的 `backup/master`；
+- 恢复前重新解析 JSON/TOML，失败不覆盖目标；
+- `init --cleanup-backups` 清理加密备份和旧明文 `.bak.*`。
 
 ---
 
@@ -909,13 +1081,14 @@ agentvault init --no-env   # 首次 init 不碰环境变量
 3. **设备绑定不是 TPM**：是指纹检查，不是硬件密封。
 4. **不阻止未迁移的明文**：v0.1 只处理它知道的配置；散落在脚本、`.env`、日志里的明文不在范围内。
 5. **env 迁移是启发式**：key 标记 + value 形状，会误判；用 dry-run + `--migrate-env` / `--keep-env`。
-6. **Codex TOML 有限支持**：支持 quoted server names、inline/env 子表、多行 args；除 `.env` 外的 bare nested tables 会被忽略。
+6. **Codex TOML 以 `toml_edit` 往返**：单/双引号、转义、多行数组、inline table、dotted key、注释、CRLF、BOM 都覆盖；非字符串 args/env 会被标记为 `unsupported` 并跳过，不会猜。
 7. **JSON 必须是严格 JSON**：JSONC 注释/尾逗号会被拒绝并报错；UTF-8 BOM 可接受。
 8. **`~/.claude.json` 只处理顶层**：`projects.*.mcpServers` 不会自动重写；请对项目 `.mcp.json` 用 `--path`。
 9. **`init` 包装默认注入值，不注入票据**：兼容 stock MCP server；票据感知场景用 `run --name <同名 secret>` 或 `--session`。
-10. **没有 GUI 自动化**：Cursor/Qoder 的 GUI 内部工具调用未做自动化验证；CLI 和配置层面已验证。
+10. **GUI 工具调用仍未自动化**：Cursor/Qoder 的 GUI 内部工具调用未做自动化验证；CLI、配置层面和 Web 控制台点击路径已验证。
 11. **没有 macOS/Linux 运行时验证**：代码和单元测试跨平台，但实机验证目前是 Windows 11。
-12. **Web 控制台暂缓**：本仓库只发布 CLI；web 代码不进入本次发布。
+12. **Web 控制台默认是本地单机模式**：虽然有账号、角色和租户标签，但不要把它当成“已 hardened 的远程多租户服务”；远程绑定需要自己加 TLS、反向代理、网络 ACL 和备份策略。
+13. **ConPTY 遮罩输入测试仍为 ignored**：需要真实交互终端，当前测试环境不伪造通过。
 
 ---
 
@@ -964,13 +1137,13 @@ agentvault run --name my/API_KEY -- node server.js
 # 子进程读取 AGENTVAULT_TICKET，再调用 agentvault resolve
 ```
 
-### Q9：为什么不直接上 Web 控制台？
+### Q9：Web 控制台和 CLI 是什么关系？
 
-CLI 是当前产品的核心和最小可信面。先把配置迁移、票据语义、撤销/审计做扎实，再上 UI；本仓库只发布 CLI。
+CLI 仍然是最小可信面，也是自动化入口；Web 控制台是同一个二进制上的本地可视化层，读同一个 `AGENTVAULT_HOME` 和 broker。默认只监听 `127.0.0.1`，第一次用 `web.token` 登录，之后可以在设置里创建 owner/admin/viewer 账号。它不是云端 SaaS，也不默认开放远程访问。
 
 ### Q10：支持团队共享一个 vault 吗？
 
-v0.1 是单机、单用户的本地 vault。团队共享、集中策略、远程审计是后续方向；当前不要把同一个 home 目录放到网络盘上共享。
+v0.1 支持一台机器上的 owner/admin/viewer 账号和租户标签，适合小团队共用一台工作站；它**不**支持把同一个 home 放到网络盘上做并发共享，也不承诺跨机器的强隔离。团队集中策略、远程审计和真正的多租户是后续方向。
 
 ---
 
@@ -980,22 +1153,28 @@ v0.1 是单机、单用户的本地 vault。团队共享、集中策略、远程
 crates/
   core/      domain types, token signing, paths, JSON store
   keystore/  OS keystore + encrypted-file fallback + derivation
-  audit/     append-only JSONL audit
-  adapters/  JSON mcpServers + Codex TOML discovery and rewrite
+  audit/     append-only JSONL audit + hash chain + Ed25519 signatures
+  backup/    AVBAK1 encrypted config backups (ChaCha20-Poly1305)
+  adapters/  JSON mcpServers + full Codex TOML round-trip via toml_edit
   broker/    local TCP broker, ticket lifecycle, client
+  web/       axum console, auth/roles/tenants, SSE, embedded assets
   cli/       agentvault binary
+webapp/      React + Vite console UI, Playwright click test
 docs/
-  assets/    logo, diagrams, terminal evidence
+  assets/    logo, diagrams, terminal evidence, web screenshots
 ```
 
 关键入口：
 
-- `crates/cli/src/main.rs`：命令解析、init/issue/run/doctor 等；
+- `crates/cli/src/main.rs`：命令解析、init/issue/run/doctor/web 等；
 - `crates/adapters/src/lib.rs`：路径注册表、JSON 计划/应用/刷新、env 启发式；
-- `crates/adapters/src/codex.rs`：Codex TOML 解析与重写；
+- `crates/adapters/src/codex.rs`：Codex TOML 完整往返与失败关闸；
+- `crates/backup/src/lib.rs`：加密备份与恢复；
+- `crates/audit/src/lib.rs`：哈希链与 Ed25519 签名；
 - `crates/broker/src/lib.rs`：本地 broker 与票据生命周期；
 - `crates/core/src/token.rs`：HMAC 票据签发/校验；
-- `crates/keystore/src/lib.rs`：DPAPI / Keychain / Secret Service / file backend。
+- `crates/keystore/src/lib.rs`：DPAPI / Keychain / Secret Service / file backend；
+- `crates/web/src/lib.rs`、`webapp/src/App.tsx`：控制台 API 与界面。
 
 ---
 
@@ -1003,12 +1182,15 @@ docs/
 
 - [x] L0：OS keystore、设备绑定、硬件指纹、票据签名
 - [x] L1：本地 broker、短期票据、task/child/renew、rotate/revoke
-- [x] L4：JSONL 审计、蜜罐 canary、全局撤销
+- [x] L4：JSONL 审计、Ed25519 签名、蜜罐 canary、全局撤销
 - [x] `init --refresh`：升级后无痛换 launcher/home
 - [x] 嵌入式 env 引用保护（`${HOME}/...`、`%VAR%\...`）
+- [x] Web 控制台：单二进制、账号/角色/租户标签、SSE、路径选择器
+- [x] 加密备份（AVBAK1）、完整 TOML 往返、审计签名校验
+- [ ] 桌面壳：本地预览已完成，暂不随仓库提交
 - [ ] L2：进程沙箱 / microVM
 - [ ] L3：egress allowlist / DLP
-- [ ] Web 控制台（单独仓库/后续版本）
+- [ ] Web 远程部署加固 / 集中策略 / 多租户强隔离
 - [ ] macOS/Linux 实机验证与 CI 覆盖
 - [ ] TPM / Secure Enclave 绑定
 - [ ] 团队策略与集中审计
