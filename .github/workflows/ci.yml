@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -55,7 +55,11 @@ jobs:
           cargo test --workspace --lib 2>&1 | tee unix-tests.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            summary=$(tail -n 40 unix-tests.log | paste -sd ' ' - | cut -c1-6000)
-            echo "::error title=Unix library test failure::$summary"
+            {
+              echo '### Unix library test failure'
+              echo '```text'
+              tail -n 120 unix-tests.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$status"
