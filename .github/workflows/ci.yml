@@ -6,7 +6,7 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test:
@@ -63,3 +63,18 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$status"
+
+      - name: Publish Unix test log
+        if: failure() && runner.os == 'Linux'
+        run: |
+          if [ -f unix-tests.log ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git checkout --orphan "ci-debug-${GITHUB_RUN_ID}"
+            git rm -rf . >/dev/null 2>&1 || true
+            cp unix-tests.log debug.log
+            git add debug.log
+            git commit -m "ci debug log ${GITHUB_RUN_ID}"
+            git push origin "HEAD:ci-debug-${GITHUB_RUN_ID}"
+          fi
+
