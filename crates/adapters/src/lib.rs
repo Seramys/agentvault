@@ -194,10 +194,8 @@ pub struct Policy {
 /// True when a command is the agentvault launcher, allowing global flags such
 /// as `--home DIR` before the `run` subcommand.
 pub fn is_agentvault_command(command: &str) -> bool {
-    let name = Path::new(command)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or(command);
+    // Configs move between machines: a Windows path may be parsed on Unix.
+    let name = command.rsplit(['/', '\\']).next().unwrap_or(command);
     name.eq_ignore_ascii_case("agentvault") || name.eq_ignore_ascii_case("agentvault.exe")
 }
 
