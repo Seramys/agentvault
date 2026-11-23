@@ -360,7 +360,7 @@ Sign in once with `web.token` as owner, then create long-lived accounts under **
 |---|---|---|
 | **Overview** | active secrets, live tickets, 24h issued/denied, composition, recent events, SSE refresh | hero above |
 | **Secrets** | add/rotate/remove; filter env / token / json; masked input | [secrets.png](docs/assets/web/secrets.png) |
-| **Tickets** | one-use leaves, task parents, renew, revoke, global kill switch; credential and TTL pickers are custom-rendered | [tickets.png](docs/assets/web/tickets.png) · [issue.png](docs/assets/web/issue.png) |
+| **Tickets** | one-use leaves, task parents, renew, revoke, global kill switch; credential picker is custom-rendered, TTL is typed | [tickets.png](docs/assets/web/tickets.png) · [issue.png](docs/assets/web/issue.png) |
 | **Agents** | six adapters, candidate path picker, dry-run preview, copy Codex command | [agents.png](docs/assets/web/agents.png) · [agent-picker.png](docs/assets/web/agent-picker.png) |
 | **Audit** | filter events, copy audit command, hash-chain/signature verification via CLI | [audit.png](docs/assets/web/audit.png) |
 | **Honeypots** | create a canary, copy its token, simulate a trip, inspect hits | [honeypots.png](docs/assets/web/honeypots.png) |
@@ -376,7 +376,7 @@ Sign in once with `web.token` as owner, then create long-lived accounts under **
 <td width="50%"><img src="docs/assets/web/audit.png" alt="Audit"><br><sub>Audit: append-only JSONL for issue, resolve, revoke and honeypot events</sub></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/assets/web/issue.png" alt="Issue ticket"><br><sub>Issue ticket: credential and TTL pickers are console-rendered menus, not native browser controls; options come from real secrets in the current home</sub></td>
+<td width="50%"><img src="docs/assets/web/issue.png" alt="Issue ticket"><br><sub>Issue ticket: the credential picker is a console-rendered menu, not a native browser control; TTL is typed; options come from real secrets in the current home</sub></td>
 <td width="50%"><img src="docs/assets/web/agent-picker.png" alt="Agent path picker"><br><sub>Agent path picker uses the same menu component, with keyboard, Escape and outside-click handling</sub></td>
 </tr>
 </table>

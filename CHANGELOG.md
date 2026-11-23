@@ -32,9 +32,9 @@
 
 ### Changed
 
-- Web console dropdowns (issue-ticket credential/TTL, agent path, account
-  role) now use one accessible in-app combobox with keyboard navigation,
-  Escape and outside-click handling; no native `<select>` remains.
+- Web console dropdowns (issue-ticket credential, agent path, account role)
+  now use one accessible in-app combobox with keyboard navigation, Escape and
+  outside-click handling; no native `<select>` remains.
 - The issue-ticket credential list is read from `/api/secrets` when the modal
   opens. Screenshot names are seed data for the demo home only; no sample
   credential names are compiled into the console.
@@ -45,6 +45,13 @@
 
 ### Fixed
 
+- Codex launcher detection accepts both `/` and `\` as path separators, so a
+  Windows `agentvault.exe` path is recognized when the same config is parsed
+  on macOS or Linux.
+- macOS/Linux keystore selection now requires a real set/get/delete
+  round-trip. A headless host with `security` or `secret-tool` installed but
+  no unlocked keychain or D-Bus session falls back to the encrypted file
+  backend instead of failing every secret operation.
 - Windows DPAPI no longer passes plaintext through the PowerShell command line;
   it uses a short-lived private temp file.
 - `atomic_write` uses a unique temp file per write and retries the Windows

@@ -358,7 +358,7 @@ agentvault web --port 8790
 |---|---|---|
 | **개요** | 활성 시크릿, 라이브 티켓, 24h 발급/거부, 구성, 최근 이벤트, SSE | 위 hero |
 | **시크릿** | 추가/회전/삭제, env/token/json 필터, 마스크 입력 | [secrets.png](docs/assets/web/secrets.png) |
-| **티켓** | 1회용 리프, 작업 부모, 갱신, 폐기, 전역 kill switch; 시크릿과 TTL은 직접 그린 메뉴로 선택 | [tickets.png](docs/assets/web/tickets.png) · [issue.png](docs/assets/web/issue.png) |
+| **티켓** | 1회용 리프, 작업 부모, 갱신, 폐기, 전역 kill switch; 시크릿은 직접 그린 메뉴로 선택하고 TTL은 직접 입력 | [tickets.png](docs/assets/web/tickets.png) · [issue.png](docs/assets/web/issue.png) |
 | **연결** | 6개 어댑터, 후보 경로 선택, dry-run 미리보기, Codex 명령 복사 | [agents.png](docs/assets/web/agents.png) · [agent-picker.png](docs/assets/web/agent-picker.png) |
 | **감사** | 이벤트 필터, 감사 명령, 해시 체인/서명 검증(CLI) | [audit.png](docs/assets/web/audit.png) |
 | **허니팟** | canary 생성, token 복사, 모의 발동, 히트 확인 | [honeypots.png](docs/assets/web/honeypots.png) |
@@ -374,7 +374,7 @@ agentvault web --port 8790
 <td width="50%"><img src="docs/assets/web/audit.png" alt="Audit"><br><sub>감사: 발급·해석·폐기·허니팟을 추가형 JSONL로 기록</sub></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/assets/web/issue.png" alt="Issue ticket"><br><sub>티켓 발급: 시크릿과 TTL은 직접 그린 메뉴를 사용하며 브라우저 기본 select가 아닙니다. 목록은 현재 home의 실제 데이터입니다</sub></td>
+<td width="50%"><img src="docs/assets/web/issue.png" alt="Issue ticket"><br><sub>티켓 발급: 시크릿은 직접 그린 메뉴를 사용하며 브라우저 기본 select가 아닙니다. TTL은 직접 입력합니다. 목록은 현재 home의 실제 데이터입니다</sub></td>
 <td width="50%"><img src="docs/assets/web/agent-picker.png" alt="Agent path picker"><br><sub>경로 선택기도 같은 메뉴 컴포넌트로, 키보드·Esc·바깥 클릭을 지원합니다</sub></td>
 </tr>
 </table>
