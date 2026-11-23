@@ -363,7 +363,7 @@ agentvault web --port 8790
 |---|---|---|
 | **概览** | 活跃凭证、活票、24h 签发/拒绝、构成、最近事件、SSE 实时刷新 | 上方 hero |
 | **凭证** | 新建/轮换/删除；按 env / token / json 筛选；密文输入 | [secrets.png](docs/assets/web/secrets.png) |
-| **票据** | 一次性叶子票、任务父票、续期、撤销、全局吊销 | [tickets.png](docs/assets/web/tickets.png) |
+| **票据** | 一次性叶子票、任务父票、续期、撤销、全局吊销；凭证与 TTL 用自定义下拉选择 | [tickets.png](docs/assets/web/tickets.png) · [issue.png](docs/assets/web/issue.png) |
 | **接入** | 六个 Agent 适配器、候选路径选择、dry-run 预览、复制 Codex 命令 | [agents.png](docs/assets/web/agents.png) · [agent-picker.png](docs/assets/web/agent-picker.png) |
 | **审计** | 事件筛选、复制审计命令、签名/哈希链校验（CLI） | [audit.png](docs/assets/web/audit.png) |
 | **蜜罐** | 创建 canary、复制 token、模拟触发、查看命中 | [honeypots.png](docs/assets/web/honeypots.png) |
@@ -378,7 +378,13 @@ agentvault web --port 8790
 <td width="50%"><img src="docs/assets/web/agents.png" alt="Agents"><br><sub>接入：检测到多个候选路径时先让你选，再 dry-run 预览</sub></td>
 <td width="50%"><img src="docs/assets/web/audit.png" alt="Audit"><br><sub>审计：追加式 JSONL，签发、解析、撤销、蜜罐都有记录</sub></td>
 </tr>
+<tr>
+<td width="50%"><img src="docs/assets/web/issue.png" alt="Issue ticket"><br><sub>新建票据：凭证和 TTL 都是控制台自绘的下拉菜单，不再是浏览器原生控件；列表来自当前 home 的真实凭证</sub></td>
+<td width="50%"><img src="docs/assets/web/agent-picker.png" alt="Agent path picker"><br><sub>接入：路径选择器同样使用自绘菜单，支持键盘、Esc 与点击外部关闭</sub></td>
+</tr>
 </table>
+
+> 截图中出现的凭证名（如 `github/readonly`）只是 demo home 的种子数据。实际运行时，下拉列表由 `/api/secrets` 实时返回；你的 home 里有什么凭证，列表里就只有什么，不含任何写死的示例值。
 
 ### 安全边界
 

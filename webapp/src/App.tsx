@@ -15,6 +15,7 @@ import {
   type Agent,
   type AuditEvent,
   type Honeypot,
+  type IssuedTicket,
   type Overview,
   type Secret,
   type Status,
@@ -105,6 +106,7 @@ const ICONS: Record<string, ReactNode> = {
     </>
   ),
   chevron: <path d="m14.5 6-6 6 6 6" />,
+  down: <path d="m6 9 6 6 6-6" />,
   plus: <path d="M12 5v14M5 12h14" />,
   copy: (
     <>
@@ -178,6 +180,82 @@ function Icon({ name, className = '' }: { name: string; className?: string }) {
     >
       {ICONS[name] || ICONS.grid}
     </svg>
+  );
+}
+
+type SelectOption = { value: string; label: string };
+
+function Select({
+  value,
+  onChange,
+  options,
+  testId,
+  placeholder = '选择',
+  className = '',
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: SelectOption[];
+  testId: string;
+  placeholder?: string;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = options.find((option) => option.value === value);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutside = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', closeOnOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div className={`select ${open ? 'open' : ''} ${className}`} ref={rootRef}>
+      <button
+        type="button"
+        className="select-trigger"
+        data-testid={testId}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className={`select-value ${selected ? '' : 'placeholder'}`}>
+          {selected?.label || placeholder}
+        </span>
+        <Icon name="down" className="select-caret" />
+      </button>
+      {open ? (
+        <div className="select-menu" role="listbox">
+          {options.map((option) => (
+            <button
+              type="button"
+              role="option"
+              aria-selected={option.value === value}
+              className={`select-option ${option.value === value ? 'selected' : ''}`}
+              key={option.value}
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+            >
+              <span className="select-option-label">{option.label}</span>
+              {option.value === value ? <Icon name="check" className="select-check" /> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -944,14 +1022,13 @@ function AgentPathPicker({
     <>
       <div className="modal-title">选择 {agent} 配置文件</div>
       <p className="modal-text">检测到多个候选路径。选择要接入的文件，下一步先展示 dry-run 计划，不会立即改写。</p>
-<select className="modal-input" data-testid="agent-path-picker" value={path} onChange={(event) => setPath(event.target.value)}>
-          {paths.map((item) => (
-            <option key={item} value={item}>
-              {item}
-            </option>
-          ))}
-        </select>
-        <div className="modal-actions">
+      <Select
+        testId="agent-path-picker"
+        value={path}
+        onChange={setPath}
+        options={paths.map((item) => ({ value: item, label: item }))}
+      />
+      <div className="modal-actions">
           <button className="btn ghost" data-testid="agent-path-cancel" onClick={onCancel}>
             取消
           </button>
@@ -959,6 +1036,68 @@ function AgentPathPicker({
             预览计划
           </button>
         </div>
+    </>
+  );
+}
+
+function IssueTicketModal({
+  secrets,
+  onCancel,
+  onIssued,
+}: {
+  secrets: Secret[];
+  onCancel: () => void;
+  onIssued: (result: IssuedTicket) => void;
+}) {
+  const options = secrets
+    .filter((secret) => !secret.honeypot)
+    .map((secret) => ({ value: secret.name, label: secret.name }));
+  const [secret, setSecret] = useState(options[0]?.value || '');
+  const [ttl, setTtl] = useState('15m');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async () => {
+    if (!secret) return;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await api.issueTicket(secret, ttl.trim() || '15m');
+      onIssued(result);
+    } catch (cause) {
+      setError(errMsg(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="modal-title">签发票据</div>
+      <p className="modal-text">默认 15 分钟、只能使用一次。票据只显示这一次，解析后即失效。</p>
+      <Select
+        testId="issue-secret"
+        value={secret}
+        onChange={setSecret}
+        options={options}
+        placeholder="选择凭证"
+      />
+      <input
+        className="modal-input"
+        data-testid="issue-ttl"
+        value={ttl}
+        onChange={(event) => setTtl(event.target.value)}
+        placeholder="TTL，例如 15m / 1h"
+      />
+      {error ? <div className="form-error">{error}</div> : null}
+      <div className="modal-actions">
+        <button className="btn ghost" onClick={onCancel} disabled={busy}>
+          取消
+        </button>
+        <button className="btn primary" data-testid="btn-issue-confirm" onClick={() => void submit()} disabled={busy || !secret}>
+          {busy ? '签发中…' : '签发'}
+        </button>
+      </div>
     </>
   );
 }
@@ -1317,16 +1456,17 @@ function AccountsCard({
           placeholder="密码（至少 6 位）"
           autoComplete="new-password"
         />
-        <select
-          className="modal-input"
-          data-testid="account-role"
+        <Select
+          testId="account-role"
+          className="select-stack"
           value={newRole}
-          onChange={(event) => setNewRole(event.target.value)}
-        >
-          <option value="viewer">viewer（只读）</option>
-          <option value="admin">admin</option>
-          <option value="owner">owner</option>
-        </select>
+          onChange={setNewRole}
+          options={[
+            { value: 'viewer', label: 'viewer（只读）' },
+            { value: 'admin', label: 'admin' },
+            { value: 'owner', label: 'owner' },
+          ]}
+        />
         <input
           className="modal-input"
           data-testid="account-tenant"
@@ -2143,69 +2283,40 @@ export default function App() {
   }, [act, confirmAction]);
 
   const openIssue = useCallback(() => {
-    const options = data.secrets.filter((secret) => !secret.honeypot);
-    if (!options.length) {
+    if (!data.secrets.some((secret) => !secret.honeypot)) {
       showToast('先创建凭证，再签发票据');
       return;
     }
     setModal({
       content: (
-        <>
-          <div className="modal-title">签发票据</div>
-          <p className="modal-text">默认 15 分钟、只能使用一次。票据只显示这一次，解析后即失效。</p>
-          <select className="modal-input" id="issueSecret" data-testid="issue-secret" defaultValue={options[0].name}>
-            {options.map((secret) => (
-              <option key={secret.name} value={secret.name}>
-                {secret.name}
-              </option>
-            ))}
-          </select>
-          <input className="modal-input" id="issueTtl" data-testid="issue-ttl" defaultValue="15m" placeholder="TTL，例如 15m / 1h" />
-          <div className="modal-actions">
-            <button className="btn ghost" onClick={() => setModal(null)}>
-              取消
-            </button>
-            <button
-              className="btn primary"
-              data-testid="btn-issue-confirm"
-              onClick={() => {
-                const secret = (document.getElementById('issueSecret') as HTMLSelectElement | null)?.value;
-                const ttl = (document.getElementById('issueTtl') as HTMLInputElement | null)?.value.trim() || '15m';
-                if (!secret) return;
-                setModal(null);
-                void (async () => {
-                  try {
-                    const result = await api.issueTicket(secret, ttl);
-                    setModal({
-                      content: (
-                        <>
-                          <div className="modal-title" data-testid="ticket-issued">票据已签发</div>
-                          <p className="modal-text">
-                            只显示一次，请复制给 Agent。{result.jti ? ` JTI ${result.jti}` : ''}
-                          </p>
-                          <textarea className="modal-input mono" readOnly value={result.ticket} rows={3} />
-                          <div className="modal-actions">
-                            <button className="btn" onClick={() => void copy(result.ticket)}>
-                              复制
-                            </button>
-                            <button className="btn primary" onClick={() => setModal(null)}>
-                              完成
-                            </button>
-                          </div>
-                        </>
-                      ),
-                    });
-                    await load();
-                  } catch (cause) {
-                    showToast(errMsg(cause));
-                  }
-                })();
-              }}
-            >
-              签发
-            </button>
-          </div>
-        </>
+        <IssueTicketModal
+          secrets={data.secrets}
+          onCancel={() => setModal(null)}
+          onIssued={(result) => {
+            setModal({
+              content: (
+                <>
+                  <div className="modal-title" data-testid="ticket-issued">
+                    票据已签发
+                  </div>
+                  <p className="modal-text">
+                    只显示一次，请复制给 Agent。{result.jti ? ` JTI ${result.jti}` : ''}
+                  </p>
+                  <textarea className="modal-input mono" readOnly value={result.ticket} rows={3} />
+                  <div className="modal-actions">
+                    <button className="btn" onClick={() => void copy(result.ticket)}>
+                      复制
+                    </button>
+                    <button className="btn primary" onClick={() => setModal(null)}>
+                      完成
+                    </button>
+                  </div>
+                </>
+              ),
+            });
+            void load();
+          }}
+        />
       ),
     });
   }, [copy, data.secrets, load, showToast]);

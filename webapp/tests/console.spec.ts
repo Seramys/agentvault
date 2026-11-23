@@ -29,7 +29,8 @@ test.describe('agentvault console', () => {
 
     await page.locator('a[href="#/tickets"]').click();
     await page.getByTestId('btn-issue-ticket').click();
-    await page.getByTestId('issue-secret').selectOption(name);
+    await page.getByTestId('issue-secret').click();
+    await page.getByRole('option', { name, exact: true }).click();
     await page.getByTestId('issue-ttl').fill('15m');
     await page.getByTestId('btn-issue-confirm').click();
     await expect(page.getByTestId('ticket-issued')).toBeVisible();

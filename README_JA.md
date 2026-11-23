@@ -358,7 +358,7 @@ agentvault web --port 8790
 |---|---|---|
 | **概要** | 有効シークレット、ライブチケット、24h 発行/拒否、構成、最近のイベント、SSE | 上の hero |
 | **シークレット** | 追加/ローテーション/削除、env/token/json 絞り込み、マスク入力 | [secrets.png](docs/assets/web/secrets.png) |
-| **チケット** | 1 回限りリーフ、タスク親、更新、失効、全体 kill switch | [tickets.png](docs/assets/web/tickets.png) |
+| **チケット** | 1 回限りリーフ、タスク親、更新、失効、全体 kill switch；シークレットと TTL は自前描画のメニューで選択 | [tickets.png](docs/assets/web/tickets.png) · [issue.png](docs/assets/web/issue.png) |
 | **接続** | 6 アダプタ、候補パス選択、dry-run プレビュー、Codex コマンド | [agents.png](docs/assets/web/agents.png) · [agent-picker.png](docs/assets/web/agent-picker.png) |
 | **監査** | イベント絞り込み、監査コマンド、ハッシュ鎖/署名検証（CLI） | [audit.png](docs/assets/web/audit.png) |
 | **ハニーポット** | canary 作成、token コピー、疑似発火、ヒット確認 | [honeypots.png](docs/assets/web/honeypots.png) |
@@ -373,7 +373,13 @@ agentvault web --port 8790
 <td width="50%"><img src="docs/assets/web/agents.png" alt="Agents"><br><sub>接続：複数候補があれば先に選択し、dry-run で確認</sub></td>
 <td width="50%"><img src="docs/assets/web/audit.png" alt="Audit"><br><sub>監査：発行・解決・失効・ハニーポットを追記型 JSONL で記録</sub></td>
 </tr>
+<tr>
+<td width="50%"><img src="docs/assets/web/issue.png" alt="Issue ticket"><br><sub>チケット発行：シークレットと TTL は自前描画のメニュー。ブラウザ標準の select は使いません。候補は現在の home の実データ</sub></td>
+<td width="50%"><img src="docs/assets/web/agent-picker.png" alt="Agent path picker"><br><sub>パス選択も同じメニュー部品。キーボード、Esc、外側クリックに対応</sub></td>
+</tr>
 </table>
+
+> スクリーンショットの `github/readonly` などはデモ home のシード値です。実行時は `/api/secrets` から取得し、あなたの home にあるシークレットだけを表示します。固定のサンプル値はありません。
 
 ### セキュリティ境界
 

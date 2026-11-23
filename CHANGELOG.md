@@ -32,6 +32,12 @@
 
 ### Changed
 
+- Web console dropdowns (issue-ticket credential/TTL, agent path, account
+  role) now use one accessible in-app combobox with keyboard navigation,
+  Escape and outside-click handling; no native `<select>` remains.
+- The issue-ticket credential list is read from `/api/secrets` when the modal
+  opens. Screenshot names are seed data for the demo home only; no sample
+  credential names are compiled into the console.
 - `init` now writes an encrypted backup before rewriting, then re-parses; a
   failed verification restores the backup instead of leaving a partial file.
 - Backup listing still reports legacy plaintext `*.bak.*` files so they can be
