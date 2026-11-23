@@ -297,7 +297,31 @@ mod imp {
 }
 
 pub fn available() -> bool {
-    imp::available()
+    #[cfg(windows)]
+    {
+        return imp::available();
+    }
+    #[cfg(not(windows))]
+    {
+        // `security` and `secret-tool` can be installed on a host that has no
+        // unlocked keychain or D-Bus session (CI runners, headless servers).
+        // Checking the binary alone would select a backend that fails every
+        // read/write, so verify one real round-trip first.
+        static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *AVAILABLE.get_or_init(|| imp::available() && probe_roundtrip())
+    }
+}
+
+#[cfg(not(windows))]
+fn probe_roundtrip() -> bool {
+    let dir = std::env::temp_dir();
+    let name = format!("agentvault-probe-{}", std::process::id());
+    if imp::set(&dir, &name, "ok").is_err() {
+        return false;
+    }
+    let usable = matches!(imp::get(&dir, &name), Ok(Some(value)) if value == "ok");
+    let _ = imp::delete(&dir, &name);
+    usable
 }
 
 pub fn get(dir: &Path, name: &str) -> Result<Option<String>> {
