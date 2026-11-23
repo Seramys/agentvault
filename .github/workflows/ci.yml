@@ -49,4 +49,13 @@ jobs:
 
       - name: Test (library, Unix)
         if: runner.os != 'Windows'
-        run: cargo test --workspace --lib
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --workspace --lib 2>&1 | tee unix-tests.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            summary=$(tail -n 40 unix-tests.log | paste -sd ' ' - | cut -c1-6000)
+            echo "::error title=Unix library test failure::$summary"
+          fi
+          exit "$status"
